@@ -32,6 +32,15 @@ st.markdown("""
         margin: 1.5rem 0 1rem 0;
         font-weight: 600;
     }
+    .subsection-header {
+        background: linear-gradient(90deg, #adb5bd, #6c757d);
+        color: white;
+        padding: 0.5rem 0.75rem;
+        border-radius: 4px;
+        margin: 1rem 0 0.75rem 0;
+        font-weight: 500;
+        font-size: 0.95rem;
+    }
     .info-box {
         background-color: #f5f5f5;
         padding: 0.75rem;
@@ -342,7 +351,7 @@ def experiment_designer():
             st.session_state.form_data['expected_lift'] = None
     
     # ===== SAMPLE SIZE & RUNTIME CALCULATION =====
-    st.markdown('<div class="step-header"><h4>📊 Sample Size & Runtime Calculator</h4></div>', unsafe_allow_html=True)
+    st.markdown('<div class="subsection-header"><h4>📊 Sample Size & Runtime Calculator</h4></div>', unsafe_allow_html=True)
     
     # Statistical parameters and traffic input in columns
     col1, col2, col3 = st.columns(3)
