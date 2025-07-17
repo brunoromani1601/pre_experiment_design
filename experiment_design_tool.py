@@ -33,7 +33,7 @@ st.markdown("""
         font-weight: 600;
     }
     .subsection-header {
-        background: linear-gradient(90deg, #adb5bd, #6c757d);
+        background: #adb5bd;
         color: white;
         padding: 0.5rem 0.75rem;
         border-radius: 4px;
