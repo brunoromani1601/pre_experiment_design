@@ -5,6 +5,7 @@ from core.session_manager import SessionManager
 from ui.styling import get_custom_css
 from components.sample_calculator import sample_size_calculator
 from components.experiment_designer import experiment_designer
+from components.post_experiment_analysis import post_experiment_analysis
 
 # Configure page
 st.set_page_config(
@@ -25,12 +26,14 @@ def main():
     st.markdown("Design and standardize your experiments with proper statistical rigor")
     
     # Sidebar for navigation
-    page = st.sidebar.selectbox("Navigate", ["🎯 Pre-Experiment Design Tool", "📊 Sample Size Calculator"])
+    page = st.sidebar.selectbox("Navigate", ["🎯 Pre-Experiment Design Tool", "📊 Sample Size Calculator", "📈 Post-Experiment Analysis"])
     
     if page == "🎯 Pre-Experiment Design Tool":
         experiment_designer()
-    else:
+    elif page == "📊 Sample Size Calculator":
         sample_size_calculator()
+    else:
+        post_experiment_analysis()
 
 if __name__ == "__main__":
     main() 

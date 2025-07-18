@@ -21,6 +21,34 @@ def experiment_designer():
     if experiment_name != SessionManager.get_form_data('experiment_name', ''):
         SessionManager.set_form_data('experiment_name', experiment_name)
     
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        owner_name = st.text_input(
+            "👤 Experiment Owner",
+            value=SessionManager.get_form_data('owner_name', ''),
+            placeholder="e.g., John Smith",
+            help="Name of the person responsible for this experiment",
+            key="owner_name_input"
+        )
+        
+        # Auto-save to session state
+        if owner_name != SessionManager.get_form_data('owner_name', ''):
+            SessionManager.set_form_data('owner_name', owner_name)
+    
+    with col2:
+        stakeholders = st.text_input(
+            "👥 Stakeholders",
+            value=SessionManager.get_form_data('stakeholders', ''),
+            placeholder="e.g., Marketing Team, Product Manager",
+            help="People or teams who should be informed about this experiment",
+            key="stakeholders_input"
+        )
+        
+        # Auto-save to session state
+        if stakeholders != SessionManager.get_form_data('stakeholders', ''):
+            SessionManager.set_form_data('stakeholders', stakeholders)
+    
     feature_description = st.text_area(
         "⚙️ Feature Being Tested",
         value=SessionManager.get_form_data('feature_description', ''),
@@ -392,6 +420,8 @@ def experiment_designer():
         # Create preview data
         preview_data = {
             'experiment_name': experiment_name or "Untitled Experiment",
+            'owner_name': owner_name or "Not specified",
+            'stakeholders': stakeholders or "Not specified",
             'feature_description': feature_description or "Not specified",
             'hypothesis': hypothesis or "Not specified",
             'test_type': test_type,
@@ -420,6 +450,8 @@ def experiment_designer():
         with col1:
             st.subheader("📊 Experiment Details")
             st.write(f"**Name:** {preview_data['experiment_name']}")
+            st.write(f"**Owner:** {preview_data['owner_name']}")
+            st.write(f"**Stakeholders:** {preview_data['stakeholders']}")
             st.write(f"**Test Type:** {preview_data['test_type']}")
             st.write(f"**Primary Metric:** {preview_data['primary_metric']} (Baseline: {preview_data['baseline_value']}%)")
             
@@ -470,6 +502,16 @@ def experiment_designer():
         else:
             validation_issues.append("✅ Experiment name provided")
             
+        if not owner_name:
+            validation_issues.append("⚠️ Experiment owner recommended")
+        else:
+            validation_issues.append("✅ Experiment owner provided")
+            
+        if not stakeholders:
+            validation_issues.append("⚠️ Stakeholders recommended")
+        else:
+            validation_issues.append("✅ Stakeholders provided")
+            
         if not feature_description:
             validation_issues.append("❌ Feature description is required")
         else:
@@ -516,6 +558,8 @@ def experiment_designer():
             # Create final form data
             final_form_data = {
                 'experiment_name': experiment_name,
+                'owner_name': owner_name,
+                'stakeholders': stakeholders,
                 'feature_description': feature_description,
                 'hypothesis': hypothesis,
                 'test_type': test_type,
@@ -550,6 +594,8 @@ def experiment_designer():
             # Display final summary
             st.subheader("📋 Final Experiment Summary")
             st.write(f"**Experiment:** {experiment_name}")
+            st.write(f"**Owner:** {owner_name}")
+            st.write(f"**Stakeholders:** {stakeholders}")
             st.write(f"**Test Type:** {test_type}")
             st.write(f"**Primary Metric:** {primary_metric} (Baseline: {baseline_value}%)")
             if test_type == "Superiority Test":
