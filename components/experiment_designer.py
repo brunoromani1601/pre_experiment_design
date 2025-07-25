@@ -2,6 +2,7 @@ import streamlit as st
 from core.calculator import SampleSizeCalculator
 from core.pdf_generator import PDFGenerator
 from core.session_manager import SessionManager
+from core.notion_integration import NotionIntegration
 
 def experiment_designer():
     st.markdown('<div class="step-header"><h2>🎯 Pre-Experiment Design Tool</h2></div>', unsafe_allow_html=True)
@@ -308,17 +309,40 @@ def experiment_designer():
     # ===== STEP 3: CAMPAIGN & CONFIGURATION =====
     st.markdown('<div class="step-header"><h3>Step 3: Campaign & Configuration</h3></div>', unsafe_allow_html=True)
     
-    campaign = st.selectbox(
-        "🎯 Campaign",
-        ["FastLoanAdvance-Google", "GraceLoanAdvance-Google", "5k Dupes"],
-        index=["FastLoanAdvance-Google", "GraceLoanAdvance-Google", "5k Dupes"].index(SessionManager.get_form_data('campaign', 'FastLoanAdvance-Google')),
-        help="Which campaign will this experiment run in?",
-        key="campaign_input"
-    )
-    
-    # Auto-save to session state
-    if campaign != SessionManager.get_form_data('campaign', ''):
-        SessionManager.set_form_data('campaign', campaign)
+    # Add EPCVIP Campaigns dropdown
+    try:
+        notion_integration = NotionIntegration()
+        campaign_options = notion_integration.get_campaign_options()
+        campaign_names = [campaign['name'] for campaign in campaign_options]
+        
+        # Add "None" option for optional selection
+        campaign_names_with_none = ["None"] + campaign_names
+        
+        # Get saved value and handle case where it might not be in current list
+        saved_campaign = SessionManager.get_form_data('epcvip_campaign', 'None')
+        if saved_campaign not in campaign_names_with_none:
+            saved_campaign = 'None'
+        
+        epcvip_campaign = st.selectbox(
+            "🎯 EPCVIP Campaign",
+            campaign_names_with_none,
+            index=campaign_names_with_none.index(saved_campaign),
+            help="Select the EPCVIP Campaign from Notion database (optional)",
+            key="epcvip_campaign_input"
+        )
+        
+        # Convert "None" to empty string for storage
+        if epcvip_campaign == "None":
+            epcvip_campaign = ""
+        
+        # Auto-save to session state
+        if epcvip_campaign != SessionManager.get_form_data('epcvip_campaign', ''):
+            SessionManager.set_form_data('epcvip_campaign', epcvip_campaign)
+            
+    except Exception as e:
+        st.error(f"❌ Error loading EPCVIP Campaigns: {e}")
+        epcvip_campaign = ""
+        SessionManager.set_form_data('epcvip_campaign', "")
     
     traffic_type = st.selectbox(
         "🚦 Traffic Type",
@@ -355,6 +379,19 @@ def experiment_designer():
     # Auto-save to session state
     if treatment_variant != SessionManager.get_form_data('treatment_variant', ''):
         SessionManager.set_form_data('treatment_variant', treatment_variant)
+    
+    # Add JIRA Link field
+    jira_link = st.text_input(
+        "🔗 JIRA Link (Ad Chain)",
+        value=SessionManager.get_form_data('jira_link', ''),
+        placeholder="https://jira.company.com/browse/EXP-123",
+        help="Optional: Link to the JIRA ticket for this experiment",
+        key="jira_link_input"
+    )
+    
+    # Auto-save to session state
+    if jira_link != SessionManager.get_form_data('jira_link', ''):
+        SessionManager.set_form_data('jira_link', jira_link)
     
     # ===== STEP 4: TARGET AUDIENCE =====
     st.markdown('<div class="step-header"><h3>Step 4: Target Audience</h3></div>', unsafe_allow_html=True)
@@ -430,7 +467,7 @@ def experiment_designer():
             'expected_lift': expected_lift if test_type == "Superiority Test" else None,
             'non_inferiority_margin': non_inferiority_margin if test_type == "Non-Inferiority Test" else None,
             'secondary_metrics': secondary_metrics,
-            'campaign': campaign,
+            'epcvip_campaign': epcvip_campaign,
             'traffic_type': traffic_type,
             'user_segment': user_segment,
             'control_variant': control_variant,
@@ -460,7 +497,8 @@ def experiment_designer():
             elif preview_data['test_type'] == "Non-Inferiority Test" and preview_data['non_inferiority_margin']:
                 st.write(f"**Non-Inferiority Margin:** {preview_data['non_inferiority_margin']}%")
             
-            st.write(f"**Campaign:** {preview_data['campaign']}")
+            if preview_data['epcvip_campaign']:
+                st.write(f"**EPCVIP Campaign:** {preview_data['epcvip_campaign']}")
             st.write(f"**Traffic Type:** {preview_data['traffic_type']}")
             st.write(f"**User Segment:** {preview_data['user_segment']}")
             st.write(f"**Device Type:** {preview_data['device_type']}")
@@ -537,80 +575,125 @@ def experiment_designer():
     
     # ===== FINAL SUBMISSION SECTION =====
     st.markdown("---")
-    st.markdown('<div class="step-header"><h3>🚀 Generate Final Experiment Design</h3></div>', unsafe_allow_html=True)
+    st.markdown('<div class="step-header"><h3>🚀 Create Experiment in Notion</h3></div>', unsafe_allow_html=True)
     
-    # Generate final design button
-    if st.button("🚀 Generate Final Design", type="primary"):
-            # Validate required fields
-            if not experiment_name or not feature_description or not hypothesis:
-                st.error("❌ Please fill in all required fields: Experiment Name, Feature Being Tested, and Hypothesis")
+    # Create final form data
+    saved_sample_size = SessionManager.get_form_data('calculated_sample_size')
+    saved_runtime = SessionManager.get_form_data('estimated_runtime')
+    saved_daily_users = SessionManager.get_form_data('daily_users_calculated')
+    
+    final_form_data = {
+        'experiment_name': experiment_name,
+        'owner_name': owner_name,
+        'stakeholders': stakeholders,
+        'feature_description': feature_description,
+        'hypothesis': hypothesis,
+        'test_type': test_type,
+        'primary_metric': primary_metric,
+        'baseline_value': baseline_value,
+        'expected_lift': expected_lift if test_type == "Superiority Test" else None,
+        'non_inferiority_margin': non_inferiority_margin if test_type == "Non-Inferiority Test" else None,
+        'secondary_metrics': secondary_metrics,
+        'epcvip_campaign': epcvip_campaign,
+        'traffic_type': traffic_type,
+        'user_segment': user_segment,
+        'control_variant': control_variant,
+        'treatment_variant': treatment_variant,
+        'device_type': device_type,
+        'traffic_period': SessionManager.get_form_data('traffic_period', 'Daily'),
+        'daily_users': saved_daily_users or 0,
+        'calculated_sample_size': saved_sample_size,
+        'estimated_runtime': saved_runtime,
+        'priority': priority,
+        'business_goal': business_goal,
+        'jira_link': jira_link
+    }
+    
+    # Save to session state
+    SessionManager.update_form_data(final_form_data)
+    
+    # Step 1: Review Notion Data
+    if st.button("📋 Review Notion Data", type="primary"):
+        # Validate required fields
+        if not experiment_name or not feature_description or not hypothesis:
+            st.error("❌ Please fill in all required fields: Experiment Name, Feature Being Tested, and Hypothesis")
+            return
+        
+        if not saved_sample_size:
+            st.error("❌ Sample size calculation failed. Please check your test parameters.")
+            return
+        
+        # Validate EPCVIP Campaign if selected
+        if epcvip_campaign:
+            try:
+                notion_integration = NotionIntegration()
+                if not notion_integration.validate_campaign_selection(epcvip_campaign):
+                    st.error(f"❌ Selected EPCVIP Campaign '{epcvip_campaign}' not found in Notion database")
+                    return
+            except Exception as e:
+                st.error(f"❌ Error validating EPCVIP Campaign: {e}")
                 return
-            
-            saved_sample_size = SessionManager.get_form_data('calculated_sample_size')
-            if not saved_sample_size:
-                st.error("❌ Sample size calculation failed. Please check your test parameters.")
-                return
-            
-            # Get saved values from session state
-            saved_runtime = SessionManager.get_form_data('estimated_runtime')
-            saved_daily_users = SessionManager.get_form_data('daily_users_calculated')
-            
-            # Create final form data
-            final_form_data = {
-                'experiment_name': experiment_name,
-                'owner_name': owner_name,
-                'stakeholders': stakeholders,
-                'feature_description': feature_description,
-                'hypothesis': hypothesis,
-                'test_type': test_type,
-                'primary_metric': primary_metric,
-                'baseline_value': baseline_value,
-                'expected_lift': expected_lift if test_type == "Superiority Test" else None,
-                'non_inferiority_margin': non_inferiority_margin if test_type == "Non-Inferiority Test" else None,
-                'secondary_metrics': secondary_metrics,
-                'campaign': campaign,
-                'traffic_type': traffic_type,
-                'user_segment': user_segment,
-                'control_variant': control_variant,
-                'treatment_variant': treatment_variant,
-                'device_type': device_type,
-                'traffic_period': SessionManager.get_form_data('traffic_period', 'Daily'),
-                'daily_users': saved_daily_users or 0,
-                'calculated_sample_size': saved_sample_size,
-                'estimated_runtime': saved_runtime,
-                'priority': priority,
-                'business_goal': business_goal
-            }
-            
-            # Save to session state
-            SessionManager.update_form_data(final_form_data)
-            
-            # Generate PDF
-            pdf_generator = PDFGenerator()
-            pdf_buffer = pdf_generator.create_experiment_pdf(final_form_data)
-            
-            st.success("✅ Experiment design generated successfully!")
-            
-            # Display final summary
-            st.subheader("📋 Final Experiment Summary")
-            st.write(f"**Experiment:** {experiment_name}")
-            st.write(f"**Owner:** {owner_name}")
-            st.write(f"**Stakeholders:** {stakeholders}")
-            st.write(f"**Test Type:** {test_type}")
-            st.write(f"**Primary Metric:** {primary_metric} (Baseline: {baseline_value}%)")
-            if test_type == "Superiority Test":
-                st.write(f"**Expected Lift:** {expected_lift}%")
-            else:
-                st.write(f"**Non-Inferiority Margin:** {non_inferiority_margin}%")
-            st.write(f"**Sample Size:** {saved_sample_size:,} users per group ({saved_sample_size*2:,} total)")
-            st.write(f"**Runtime:** {saved_runtime} days")
-            st.write(f"**Priority:** {priority}")
-            
-            # Download button
-            st.download_button(
-                label="📥 Download Experiment Design (PDF)",
-                data=pdf_buffer,
-                file_name=f"experiment_design_{experiment_name.replace(' ', '_')}.pdf",
-                mime="application/pdf",
-                type="primary"
-            ) 
+        
+        # Show preview of what will be sent to Notion
+        st.success("✅ Form validation passed!")
+        
+        st.subheader("📋 Notion Preview")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Notion Properties:**")
+            st.write(f"• **Test Order:** {experiment_name}")
+            st.write(f"• **Ad Chain:** {treatment_variant}")
+            if jira_link:
+                st.write(f"• **JIRA Link (Ad Chain):** {jira_link}")
+            if epcvip_campaign:
+                st.write(f"• **EPCVIP Campaigns:** {epcvip_campaign}")
+            st.write("• **Feature Status:** Planned (default for new experiments)")
+        
+        with col2:
+            st.write("**Page Content Preview:**")
+            st.write("📋 Experiment Details")
+            st.write(f"• Name: {experiment_name}")
+            st.write(f"• Owner: {owner_name}")
+            st.write(f"• Test Type: {test_type}")
+            st.write(f"• Sample Size: {saved_sample_size:,} users per group")
+            st.write(f"• Runtime: {saved_runtime} days")
+            if epcvip_campaign:
+                st.write(f"• EPCVIP Campaign: {epcvip_campaign}")
+        
+        # Store form data in session for the next step
+        st.session_state.notion_form_data = final_form_data
+        st.session_state.show_create_button = True
+    
+    # Step 2: Create in Notion
+    if st.session_state.get('show_create_button', False):
+        st.markdown("---")
+        st.subheader("🚀 Create Experiment")
+        
+        if st.button("✅ Create in Notion", type="primary"):
+            try:
+                # Initialize Notion integration
+                notion_integration = NotionIntegration()
+                
+                # Create experiment in Notion
+                new_page = notion_integration.create_experiment_page(st.session_state.notion_form_data)
+                
+                if new_page:
+                    st.success("✅ Experiment created successfully in Notion!")
+                    
+                    # Display success information
+                    page_url = f"https://notion.so/{new_page['id'].replace('-', '')}"
+                    st.write(f"**Page ID:** {new_page['id']}")
+                    st.write(f"**View in Notion:** [Click here]({page_url})")
+                    
+                    # Clear session state
+                    st.session_state.show_create_button = False
+                    if 'notion_form_data' in st.session_state:
+                        del st.session_state.notion_form_data
+                else:
+                    st.error("❌ Failed to create experiment in Notion. Please check the error messages above.")
+                    
+            except Exception as e:
+                st.error(f"❌ Error connecting to Notion: {e}")
+                st.error("Please check your Notion token and try again.") 
