@@ -4,6 +4,73 @@ from core.pdf_generator import PDFGenerator
 from core.session_manager import SessionManager
 from core.notion_integration import NotionIntegration
 
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_notion_initiatives():
+    """Cached function to get Notion initiatives"""
+    try:
+        notion_integration = NotionIntegration()
+        return notion_integration.get_initiative_options()
+    except Exception as e:
+        st.error(f"❌ Error loading EPCVIP Initiatives: {e}")
+        return []
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_notion_campaigns():
+    """Cached function to get Notion campaigns"""
+    try:
+        notion_integration = NotionIntegration()
+        return notion_integration.get_campaign_options()
+    except Exception as e:
+        st.error(f"❌ Error loading EPCVIP Campaigns: {e}")
+        return []
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_notion_affiliates():
+    """Cached function to get Notion affiliates"""
+    try:
+        notion_integration = NotionIntegration()
+        return notion_integration.get_affiliate_options()
+    except Exception as e:
+        st.error(f"❌ Error loading EPCVIP Affiliates: {e}")
+        return []
+
+def debounced_session_update(key, value, current_value):
+    """Update session state only if value has actually changed"""
+    if value != current_value:
+        SessionManager.set_form_data(key, value)
+        return True
+    return False
+
+def log_performance_issue(component_name):
+    """Log performance issues for debugging"""
+    if 'performance_issues' not in st.session_state:
+        st.session_state.performance_issues = {}
+    
+    if component_name not in st.session_state.performance_issues:
+        st.session_state.performance_issues[component_name] = 0
+    
+    st.session_state.performance_issues[component_name] += 1
+    
+    # Only show warning after multiple issues
+    if st.session_state.performance_issues[component_name] > 5:
+        st.warning(f"⚠️ Performance issue detected in {component_name}. Consider refreshing the page.")
+
+@st.cache_data(ttl=60)  # Cache for 1 minute
+def calculate_sample_size(test_type, primary_metric, baseline_value, expected_lift=None, non_inferiority_margin=None, alpha=0.05, power=0.80):
+    """Cached sample size calculation"""
+    calc = SampleSizeCalculator()
+    
+    if test_type == "Superiority Test" and expected_lift is not None:
+        if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
+            p1 = baseline_value / 100
+            p2 = (baseline_value + expected_lift) / 100
+            return calc.calculate_proportions(p1, p2, alpha, power)
+    elif test_type == "Non-Inferiority Test" and non_inferiority_margin is not None:
+        p1 = baseline_value / 100
+        return calc.calculate_non_inferiority(p1, non_inferiority_margin / 100, alpha, power)
+    
+    return None
+
 def experiment_designer():
     st.markdown('<div class="step-header"><h2>🎯 Pre-Experiment Design Tool</h2></div>', unsafe_allow_html=True)
     
@@ -51,40 +118,33 @@ def experiment_designer():
             SessionManager.set_form_data('stakeholders', stakeholders)
     
     # Add EPCVIP Initiative dropdown with search
-    try:
-        notion_integration = NotionIntegration()
-        initiative_options = notion_integration.get_initiative_options()
-        initiative_names = [initiative['name'] for initiative in initiative_options]
-        
-        # Add "None" option for optional selection
-        initiative_names_with_none = ["None"] + initiative_names
-        
-        # Get saved value and handle case where it might not be in current list
-        saved_initiative = SessionManager.get_form_data('epcvip_initiative', 'None')
-        if saved_initiative not in initiative_names_with_none:
-            saved_initiative = 'None'
-        
-        epcvip_initiative = st.selectbox(
-            "🎯 EPCVIP Initiative",
-            initiative_names_with_none,
-            index=initiative_names_with_none.index(saved_initiative),
-            help="Select the EPCVIP Initiative from Notion database (optional). Type to search through 100+ initiatives.",
-            key="epcvip_initiative_input"
-        )
-        
-        # Convert "None" to empty string for storage
-        if epcvip_initiative == "None":
-            epcvip_initiative = ""
-        
-        # Auto-save to session state
-        if epcvip_initiative != SessionManager.get_form_data('epcvip_initiative', ''):
-            SessionManager.set_form_data('epcvip_initiative', epcvip_initiative)
-            
-    except Exception as e:
-        st.error(f"❌ Error loading EPCVIP Initiatives: {e}")
-        epcvip_initiative = ""
-        SessionManager.set_form_data('epcvip_initiative', "")
+    initiative_options = get_notion_initiatives()
+    initiative_names = [initiative['name'] for initiative in initiative_options]
     
+    # Add "None" option for optional selection
+    initiative_names_with_none = ["None"] + initiative_names
+    
+    # Get saved value and handle case where it might not be in current list
+    saved_initiative = SessionManager.get_form_data('epcvip_initiative', 'None')
+    if saved_initiative not in initiative_names_with_none:
+        saved_initiative = 'None'
+    
+    epcvip_initiative = st.selectbox(
+        "🎯 EPCVIP Initiative",
+        initiative_names_with_none,
+        index=initiative_names_with_none.index(saved_initiative),
+        help="Select the EPCVIP Initiative from Notion database (optional). Type to search through 100+ initiatives.",
+        key="epcvip_initiative_input"
+    )
+    
+    # Convert "None" to empty string for storage
+    if epcvip_initiative == "None":
+        epcvip_initiative = ""
+    
+    # Auto-save to session state
+    if epcvip_initiative != SessionManager.get_form_data('epcvip_initiative', ''):
+        SessionManager.set_form_data('epcvip_initiative', epcvip_initiative)
+            
     feature_description = st.text_area(
         "⚙️ Feature Being Tested",
         value=SessionManager.get_form_data('feature_description', ''),
@@ -345,73 +405,60 @@ def experiment_designer():
     st.markdown('<div class="step-header"><h3>Step 3: Campaign & Configuration</h3></div>', unsafe_allow_html=True)
     
     # Add EPCVIP Campaigns dropdown
-    try:
-        notion_integration = NotionIntegration()
-        campaign_options = notion_integration.get_campaign_options()
-        campaign_names = [campaign['name'] for campaign in campaign_options]
-        
-        # Add "None" option for optional selection
-        campaign_names_with_none = ["None"] + campaign_names
-        
-        # Get saved value and handle case where it might not be in current list
-        saved_campaign = SessionManager.get_form_data('epcvip_campaign', 'None')
-        if saved_campaign not in campaign_names_with_none:
-            saved_campaign = 'None'
-        
-        epcvip_campaign = st.selectbox(
-            "🎯 EPCVIP Campaign",
-            campaign_names_with_none,
-            index=campaign_names_with_none.index(saved_campaign),
-            help="Select the EPCVIP Campaign from Notion database (optional)",
-            key="epcvip_campaign_input"
-        )
-        
-        # Convert "None" to empty string for storage
-        if epcvip_campaign == "None":
-            epcvip_campaign = ""
-        
-        # Auto-save to session state
-        if epcvip_campaign != SessionManager.get_form_data('epcvip_campaign', ''):
-            SessionManager.set_form_data('epcvip_campaign', epcvip_campaign)
-            
-    except Exception as e:
-        st.error(f"❌ Error loading EPCVIP Campaigns: {e}")
-        epcvip_campaign = ""
-        SessionManager.set_form_data('epcvip_campaign', "")
+    campaign_options = get_notion_campaigns()
+    campaign_names = [campaign['name'] for campaign in campaign_options]
     
-    # Add EPCVIP Affiliates dropdown
-    try:
-        affiliate_options = notion_integration.get_affiliate_options()
-        affiliate_names = [affiliate['name'] for affiliate in affiliate_options]
-        
-        # Add "None" option for optional selection
-        affiliate_names_with_none = ["None"] + affiliate_names
-        
-        # Get saved value and handle case where it might not be in current list
-        saved_affiliate = SessionManager.get_form_data('epcvip_affiliate', 'None')
-        if saved_affiliate not in affiliate_names_with_none:
-            saved_affiliate = 'None'
-        
-        epcvip_affiliate = st.selectbox(
-            "🤝 EPCVIP Affiliate",
-            affiliate_names_with_none,
-            index=affiliate_names_with_none.index(saved_affiliate),
-            help="Select the EPCVIP Affiliate from Notion database (optional)",
-            key="epcvip_affiliate_input"
-        )
-        
-        # Convert "None" to empty string for storage
-        if epcvip_affiliate == "None":
-            epcvip_affiliate = ""
-        
-        # Auto-save to session state
-        if epcvip_affiliate != SessionManager.get_form_data('epcvip_affiliate', ''):
-            SessionManager.set_form_data('epcvip_affiliate', epcvip_affiliate)
+    # Add "None" option for optional selection
+    campaign_names_with_none = ["None"] + campaign_names
+    
+    # Get saved value and handle case where it might not be in current list
+    saved_campaign = SessionManager.get_form_data('epcvip_campaign', 'None')
+    if saved_campaign not in campaign_names_with_none:
+        saved_campaign = 'None'
+    
+    epcvip_campaign = st.selectbox(
+        "🎯 EPCVIP Campaign",
+        campaign_names_with_none,
+        index=campaign_names_with_none.index(saved_campaign),
+        help="Select the EPCVIP Campaign from Notion database (optional)",
+        key="epcvip_campaign_input"
+    )
+    
+    # Convert "None" to empty string for storage
+    if epcvip_campaign == "None":
+        epcvip_campaign = ""
+    
+    # Auto-save to session state
+    if epcvip_campaign != SessionManager.get_form_data('epcvip_campaign', ''):
+        SessionManager.set_form_data('epcvip_campaign', epcvip_campaign)
             
-    except Exception as e:
-        st.error(f"❌ Error loading EPCVIP Affiliates: {e}")
+    # Add EPCVIP Affiliates dropdown
+    affiliate_options = get_notion_affiliates()
+    affiliate_names = [affiliate['name'] for affiliate in affiliate_options]
+    
+    # Add "None" option for optional selection
+    affiliate_names_with_none = ["None"] + affiliate_names
+    
+    # Get saved value and handle case where it might not be in current list
+    saved_affiliate = SessionManager.get_form_data('epcvip_affiliate', 'None')
+    if saved_affiliate not in affiliate_names_with_none:
+        saved_affiliate = 'None'
+    
+    epcvip_affiliate = st.selectbox(
+        "🤝 EPCVIP Affiliate",
+        affiliate_names_with_none,
+        index=affiliate_names_with_none.index(saved_affiliate),
+        help="Select the EPCVIP Affiliate from Notion database (optional)",
+        key="epcvip_affiliate_input"
+    )
+    
+    # Convert "None" to empty string for storage
+    if epcvip_affiliate == "None":
         epcvip_affiliate = ""
-        SessionManager.set_form_data('epcvip_affiliate', "")
+    
+    # Auto-save to session state
+    if epcvip_affiliate != SessionManager.get_form_data('epcvip_affiliate', ''):
+        SessionManager.set_form_data('epcvip_affiliate', epcvip_affiliate)
     
     traffic_type = st.selectbox(
         "🚦 Traffic Type",
@@ -739,7 +786,7 @@ def experiment_designer():
         
         with col1:
             st.write("**Notion Properties:**")
-            st.write(f"• **Test Order:** {experiment_name}")
+            st.write(f"• **Test Order:** 1 (title)")
             st.write(f"• **Ad Chain:** {treatment_variant}")
             if jira_link:
                 st.write(f"• **JIRA Link (Ad Chain):** {jira_link}")
@@ -752,7 +799,7 @@ def experiment_designer():
         with col2:
             st.write("**Page Content Preview:**")
             st.write("📋 Experiment Details")
-            st.write(f"• Name: {experiment_name}")
+            st.write(f"• **Experiment Name:** {experiment_name} (will be in page content)")
             st.write(f"• Owner: {owner_name}")
             st.write(f"• Test Type: {test_type}")
             st.write(f"• Sample Size: {saved_sample_size:,} users per group")

@@ -228,7 +228,7 @@ class NotionIntegration:
             # Prepare Notion properties
             properties = {
                 "Test Order": {
-                    "title": [{"text": {"content": form_data.get('experiment_name', 'Untitled Experiment')}}]
+                    "title": [{"text": {"content": "1"}}]
                 },
                 "Ad Chain": {
                     "rich_text": [{"text": {"content": form_data.get('treatment_variant', '')}}]

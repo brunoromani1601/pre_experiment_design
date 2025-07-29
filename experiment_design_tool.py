@@ -20,6 +20,11 @@ st.markdown(get_custom_css(), unsafe_allow_html=True)
 # Initialize session state
 SessionManager.initialize_session_state()
 
+# Initialize performance tracking
+if 'performance_initialized' not in st.session_state:
+    st.session_state.performance_initialized = True
+    st.session_state.last_interaction = None
+
 # ===== MAIN APPLICATION =====
 def main():
     st.title("🧪 SCS Experiment Design")
