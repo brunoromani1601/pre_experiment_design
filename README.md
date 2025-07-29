@@ -63,12 +63,37 @@ A comprehensive Streamlit-based application for designing and standardizing A/B 
    pip install -r requirements.txt
    ```
 
-5. **Run the application**
+5. **Configure environment variables** (for Notion integration)
+   Create a `.env` file in the project root with your Notion configuration:
+   
+   **Option A: Use the helper script**
+   ```bash
+   python setup_env.py
+   ```
+   
+   **Option B: Create manually**
+   ```bash
+   # Notion API Configuration
+   NOTION_TOKEN=your_notion_integration_token_here
+   
+   # Notion Database IDs (get these from your Notion database URLs)
+   NOTION_EXPERIMENTS_DB_ID=your_experiments_database_id_here
+   NOTION_CAMPAIGNS_DB_ID=your_campaigns_database_id_here
+   NOTION_AFFILIATES_DB_ID=your_affiliates_database_id_here
+   NOTION_INITIATIVES_DB_ID=your_initiatives_database_id_here
+   ```
+   
+   **🔍 How to find database IDs:**
+   - Open your Notion database
+   - Copy the ID from the URL: `https://notion.so/workspace/DATABASE_ID?v=...`
+   - Or run `python find_notion_databases.py` to list all accessible databases
+
+6. **Run the application**
    ```bash
    streamlit run experiment_design_tool.py
    ```
 
-6. **Open your browser**
+7. **Open your browser**
    Navigate to `http://localhost:8501`
 
 ## 📖 Usage Guide
@@ -101,6 +126,33 @@ A comprehensive Streamlit-based application for designing and standardizing A/B 
 - **Daily/Weekly/Monthly** traffic volume inputs
 - **Automatic conversion** between time periods
 - **Runtime estimation** based on sample size and traffic
+
+## 🔗 Notion Integration
+
+The application integrates with Notion databases for seamless experiment management:
+
+### Features
+- **Automatic experiment creation** in Notion Experiments database
+- **Dynamic dropdowns** for EPCVIP Campaigns, Affiliates, and Initiatives
+- **Search functionality** for initiatives with 100+ options
+- **Two-step validation** process with preview before creation
+- **Rich content formatting** in Notion page body
+
+### Required Notion Setup
+1. **Create a Notion integration** in your workspace
+2. **Share databases** with your integration:
+   - Experiments database
+   - EPCVIP Campaigns database  
+   - EPCVIP Affiliates database
+   - Initiatives database
+3. **Get database IDs** from the Notion URL or API
+4. **Configure environment variables** in `.env` file
+
+### Database Mappings
+- **Experiments DB**: Main experiment records with relations
+- **Campaigns DB**: EPCVIP Campaign options (relation)
+- **Affiliates DB**: EPCVIP Affiliate options (summary only)
+- **Initiatives DB**: Feature/Initiative options (relation)
 
 ## 📁 Project Structure
 

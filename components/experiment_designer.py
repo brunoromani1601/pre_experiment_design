@@ -50,6 +50,41 @@ def experiment_designer():
         if stakeholders != SessionManager.get_form_data('stakeholders', ''):
             SessionManager.set_form_data('stakeholders', stakeholders)
     
+    # Add EPCVIP Initiative dropdown with search
+    try:
+        notion_integration = NotionIntegration()
+        initiative_options = notion_integration.get_initiative_options()
+        initiative_names = [initiative['name'] for initiative in initiative_options]
+        
+        # Add "None" option for optional selection
+        initiative_names_with_none = ["None"] + initiative_names
+        
+        # Get saved value and handle case where it might not be in current list
+        saved_initiative = SessionManager.get_form_data('epcvip_initiative', 'None')
+        if saved_initiative not in initiative_names_with_none:
+            saved_initiative = 'None'
+        
+        epcvip_initiative = st.selectbox(
+            "🎯 EPCVIP Initiative",
+            initiative_names_with_none,
+            index=initiative_names_with_none.index(saved_initiative),
+            help="Select the EPCVIP Initiative from Notion database (optional). Type to search through 100+ initiatives.",
+            key="epcvip_initiative_input"
+        )
+        
+        # Convert "None" to empty string for storage
+        if epcvip_initiative == "None":
+            epcvip_initiative = ""
+        
+        # Auto-save to session state
+        if epcvip_initiative != SessionManager.get_form_data('epcvip_initiative', ''):
+            SessionManager.set_form_data('epcvip_initiative', epcvip_initiative)
+            
+    except Exception as e:
+        st.error(f"❌ Error loading EPCVIP Initiatives: {e}")
+        epcvip_initiative = ""
+        SessionManager.set_form_data('epcvip_initiative', "")
+    
     feature_description = st.text_area(
         "⚙️ Feature Being Tested",
         value=SessionManager.get_form_data('feature_description', ''),
@@ -344,6 +379,40 @@ def experiment_designer():
         epcvip_campaign = ""
         SessionManager.set_form_data('epcvip_campaign', "")
     
+    # Add EPCVIP Affiliates dropdown
+    try:
+        affiliate_options = notion_integration.get_affiliate_options()
+        affiliate_names = [affiliate['name'] for affiliate in affiliate_options]
+        
+        # Add "None" option for optional selection
+        affiliate_names_with_none = ["None"] + affiliate_names
+        
+        # Get saved value and handle case where it might not be in current list
+        saved_affiliate = SessionManager.get_form_data('epcvip_affiliate', 'None')
+        if saved_affiliate not in affiliate_names_with_none:
+            saved_affiliate = 'None'
+        
+        epcvip_affiliate = st.selectbox(
+            "🤝 EPCVIP Affiliate",
+            affiliate_names_with_none,
+            index=affiliate_names_with_none.index(saved_affiliate),
+            help="Select the EPCVIP Affiliate from Notion database (optional)",
+            key="epcvip_affiliate_input"
+        )
+        
+        # Convert "None" to empty string for storage
+        if epcvip_affiliate == "None":
+            epcvip_affiliate = ""
+        
+        # Auto-save to session state
+        if epcvip_affiliate != SessionManager.get_form_data('epcvip_affiliate', ''):
+            SessionManager.set_form_data('epcvip_affiliate', epcvip_affiliate)
+            
+    except Exception as e:
+        st.error(f"❌ Error loading EPCVIP Affiliates: {e}")
+        epcvip_affiliate = ""
+        SessionManager.set_form_data('epcvip_affiliate', "")
+    
     traffic_type = st.selectbox(
         "🚦 Traffic Type",
         ["PPC", "RESID", "RAQID", "Prepop", "Affiliate"],
@@ -468,6 +537,7 @@ def experiment_designer():
             'non_inferiority_margin': non_inferiority_margin if test_type == "Non-Inferiority Test" else None,
             'secondary_metrics': secondary_metrics,
             'epcvip_campaign': epcvip_campaign,
+            'epcvip_affiliate': epcvip_affiliate,
             'traffic_type': traffic_type,
             'user_segment': user_segment,
             'control_variant': control_variant,
@@ -499,6 +569,8 @@ def experiment_designer():
             
             if preview_data['epcvip_campaign']:
                 st.write(f"**EPCVIP Campaign:** {preview_data['epcvip_campaign']}")
+            if preview_data['epcvip_affiliate']:
+                st.write(f"**EPCVIP Affiliate:** {preview_data['epcvip_affiliate']}")
             st.write(f"**Traffic Type:** {preview_data['traffic_type']}")
             st.write(f"**User Segment:** {preview_data['user_segment']}")
             st.write(f"**Device Type:** {preview_data['device_type']}")
@@ -586,6 +658,7 @@ def experiment_designer():
         'experiment_name': experiment_name,
         'owner_name': owner_name,
         'stakeholders': stakeholders,
+        'epcvip_initiative': epcvip_initiative,
         'feature_description': feature_description,
         'hypothesis': hypothesis,
         'test_type': test_type,
@@ -595,6 +668,7 @@ def experiment_designer():
         'non_inferiority_margin': non_inferiority_margin if test_type == "Non-Inferiority Test" else None,
         'secondary_metrics': secondary_metrics,
         'epcvip_campaign': epcvip_campaign,
+        'epcvip_affiliate': epcvip_affiliate,
         'traffic_type': traffic_type,
         'user_segment': user_segment,
         'control_variant': control_variant,
@@ -634,6 +708,28 @@ def experiment_designer():
                 st.error(f"❌ Error validating EPCVIP Campaign: {e}")
                 return
         
+        # Validate EPCVIP Affiliate if selected
+        if epcvip_affiliate:
+            try:
+                notion_integration = NotionIntegration()
+                if not notion_integration.validate_affiliate_selection(epcvip_affiliate):
+                    st.error(f"❌ Selected EPCVIP Affiliate '{epcvip_affiliate}' not found in Notion database")
+                    return
+            except Exception as e:
+                st.error(f"❌ Error validating EPCVIP Affiliate: {e}")
+                return
+        
+        # Validate EPCVIP Initiative if selected
+        if epcvip_initiative:
+            try:
+                notion_integration = NotionIntegration()
+                if not notion_integration.validate_initiative_selection(epcvip_initiative):
+                    st.error(f"❌ Selected EPCVIP Initiative '{epcvip_initiative}' not found in Notion database")
+                    return
+            except Exception as e:
+                st.error(f"❌ Error validating EPCVIP Initiative: {e}")
+                return
+        
         # Show preview of what will be sent to Notion
         st.success("✅ Form validation passed!")
         
@@ -649,6 +745,8 @@ def experiment_designer():
                 st.write(f"• **JIRA Link (Ad Chain):** {jira_link}")
             if epcvip_campaign:
                 st.write(f"• **EPCVIP Campaigns:** {epcvip_campaign}")
+            if epcvip_initiative:
+                st.write(f"• **Feature:** {epcvip_initiative}")
             st.write("• **Feature Status:** Planned (default for new experiments)")
         
         with col2:
@@ -661,6 +759,10 @@ def experiment_designer():
             st.write(f"• Runtime: {saved_runtime} days")
             if epcvip_campaign:
                 st.write(f"• EPCVIP Campaign: {epcvip_campaign}")
+            if epcvip_affiliate:
+                st.write(f"• EPCVIP Affiliate: {epcvip_affiliate}")
+            if epcvip_initiative:
+                st.write(f"• EPCVIP Initiative: {epcvip_initiative}")
         
         # Store form data in session for the next step
         st.session_state.notion_form_data = final_form_data
