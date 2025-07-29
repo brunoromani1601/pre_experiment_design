@@ -9,7 +9,8 @@ A comprehensive Streamlit-based application for designing and standardizing A/B 
 - **Real-time sample size calculations** for superiority and non-inferiority tests
 - **Automatic runtime estimation** based on traffic volume
 - **Live preview** of experiment design before final submission
-- **Professional PDF generation** with complete experiment documentation
+- **Notion integration** for automatic experiment creation in your database
+- **Searchable dropdowns** for EPCVIP Campaigns, Affiliates, and Initiatives
 - **Auto-save functionality** to preserve form data across sessions
 
 ### 📊 Sample Size Calculator
@@ -18,12 +19,12 @@ A comprehensive Streamlit-based application for designing and standardizing A/B 
 - **Traffic allocation planning** with detailed breakdowns
 - **Runtime estimation** with daily/weekly/monthly traffic options
 
-### 📋 Generated PDF Includes
-- **Experiment Configuration**: Feature description, hypothesis, test type, metrics
-- **Statistical Details**: Sample size per variation, total sample size, runtime
-- **SCS Configuration**: Campaign, traffic type, control/treatment variants
-- **Target Audience**: User segments, device types, traffic sources
-- **Priority & Business Context**: Priority level with color coding, business goals
+### 📋 Notion Integration Features
+- **Automatic experiment creation** in Notion Experiments database
+- **Rich content formatting** with complete experiment details
+- **Database relations** for Campaigns, Affiliates, and Initiatives
+- **Two-step validation** process with preview before creation
+- **Environment-based configuration** for secure database access
 
 ## 🚀 Quick Start
 
@@ -66,12 +67,6 @@ A comprehensive Streamlit-based application for designing and standardizing A/B 
 5. **Configure environment variables** (for Notion integration)
    Create a `.env` file in the project root with your Notion configuration:
    
-   **Option A: Use the helper script**
-   ```bash
-   python setup_env.py
-   ```
-   
-   **Option B: Create manually**
    ```bash
    # Notion API Configuration
    NOTION_TOKEN=your_notion_integration_token_here
@@ -86,7 +81,7 @@ A comprehensive Streamlit-based application for designing and standardizing A/B 
    **🔍 How to find database IDs:**
    - Open your Notion database
    - Copy the ID from the URL: `https://notion.so/workspace/DATABASE_ID?v=...`
-   - Or run `python find_notion_databases.py` to list all accessible databases
+   - Or use the Notion API to list your databases
 
 6. **Run the application**
    ```bash
@@ -105,7 +100,7 @@ A comprehensive Streamlit-based application for designing and standardizing A/B 
 3. **Configure Step 2**: Select metrics, test type, and expected lift/margin
 4. **Review real-time calculations**: Sample size and runtime are calculated automatically
 5. **Complete Steps 3-5**: Campaign configuration, target audience, and priority
-6. **Generate PDF**: Click "Generate Final Design" to create and download the PDF
+6. **Create in Notion**: Click "Review Notion Data" then "Create in Notion" to add to your database
 
 ### Using the Sample Size Calculator
 
@@ -133,10 +128,11 @@ The application integrates with Notion databases for seamless experiment managem
 
 ### Features
 - **Automatic experiment creation** in Notion Experiments database
-- **Dynamic dropdowns** for EPCVIP Campaigns, Affiliates, and Initiatives
-- **Search functionality** for initiatives with 100+ options
+- **Searchable dropdowns** for EPCVIP Campaigns, Affiliates, and Initiatives
+- **Integrated search functionality** for initiatives with 100+ options
 - **Two-step validation** process with preview before creation
 - **Rich content formatting** in Notion page body
+- **Environment-based configuration** for secure database access
 
 ### Required Notion Setup
 1. **Create a Notion integration** in your workspace
@@ -174,6 +170,8 @@ Key packages used:
 - **SciPy**: Statistical functions
 - **ReportLab**: PDF generation
 - **Altair**: Data visualization
+- **Notion Client**: Notion API integration
+- **Python-dotenv**: Environment variable management
 
 ## 🤝 Contributing
 
