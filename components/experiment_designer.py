@@ -353,6 +353,8 @@ def experiment_designer():
                 SessionManager.set_form_data('weekly_users', weekly_users)
             
             daily_users = weekly_users / 7
+            # Also save the calculated daily users
+            SessionManager.set_form_data('daily_users', daily_users)
         else:  # Monthly
             monthly_users = st.number_input(
                 "👥 Monthly Users",
@@ -366,12 +368,22 @@ def experiment_designer():
                 SessionManager.set_form_data('monthly_users', monthly_users)
             
             daily_users = monthly_users / 30
+            # Also save the calculated daily users
+            SessionManager.set_form_data('daily_users', daily_users)
     
     with col3:
         st.subheader("📊 Results")
         
         # Only calculate when parameters are stable (debounced)
-        calculation_key = f"{test_type}_{primary_metric}_{baseline_value}_{expected_lift or 0}_{non_inferiority_margin or 0}_{alpha}_{power}"
+        calculation_key = f"{test_type}_{primary_metric}_{baseline_value}_{expected_lift or 0}_{non_inferiority_margin or 0}_{alpha}_{power}_{daily_users}"
+        
+        # Validate daily_users calculation
+        if daily_users <= 0:
+            st.error("❌ Daily users must be greater than 0")
+            return
+        
+        # Show calculated daily users for validation
+        st.info(f"📊 {traffic_period} traffic: {daily_users:,.0f} daily users (split: {daily_users/2:,.0f} per group)")
         
         if 'last_calculation_key' not in st.session_state:
             st.session_state.last_calculation_key = None
@@ -380,6 +392,10 @@ def experiment_designer():
         
         # Show calculation status
         if calculation_key != st.session_state.last_calculation_key:
+            # Clear cache when parameters change
+            st.session_state.cached_sample_size = None
+            st.session_state.cached_runtime = None
+            
             with st.spinner("🔄 Calculating sample size..."):
                 # Calculate sample size based on test type and parameters
                 calc = SampleSizeCalculator()
@@ -392,7 +408,7 @@ def experiment_designer():
                         
                         # Cache results
                         st.session_state.cached_sample_size = sample_size
-                        st.session_state.cached_runtime = calc.estimate_runtime(sample_size * 2, daily_users)
+                        st.session_state.cached_runtime = calc.estimate_runtime(sample_size, daily_users)
                         st.session_state.last_calculation_key = calculation_key
                         
                         # Auto-save calculated values to session state
@@ -401,24 +417,41 @@ def experiment_designer():
                         SessionManager.set_form_data('estimated_runtime', st.session_state.cached_runtime)
                         SessionManager.set_form_data('daily_users_calculated', daily_users)
                     else:
-                        # For continuous metrics, provide guidance
-                        st.markdown('<div class="warning-box">⚠️ <b>Continuous Metrics:</b> Use sidebar calculator for detailed calculations.</div>', unsafe_allow_html=True)
-                        sample_size = 10000  # Placeholder
+                        # For continuous metrics, use proper calculation
+                        # Estimate standard deviation based on baseline (common assumption: CV = 0.5)
+                        estimated_std = baseline_value * 0.5
+                        sample_size = calc.calculate_continuous_superiority(baseline_value, expected_lift, estimated_std, alpha, power)
+                        
+                        # Cache results
                         st.session_state.cached_sample_size = sample_size
-                        st.session_state.cached_runtime = calc.estimate_runtime(sample_size * 2, daily_users)
+                        st.session_state.cached_runtime = calc.estimate_runtime(sample_size, daily_users)
                         st.session_state.last_calculation_key = calculation_key
+                        
+                        # Auto-save calculated values to session state
+                        SessionManager.set_form_data('calculated_sample_size', sample_size)
+                        SessionManager.set_form_data('treatment_mean', baseline_value + expected_lift)
+                        SessionManager.set_form_data('estimated_runtime', st.session_state.cached_runtime)
+                        SessionManager.set_form_data('daily_users_calculated', daily_users)
                 elif test_type == "Non-Inferiority Test" and non_inferiority_margin is not None:
-                    p1 = baseline_value / 100
-                    sample_size = calc.calculate_non_inferiority(p1, non_inferiority_margin / 100, alpha, power)
+                    if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
+                        p1 = baseline_value / 100
+                        sample_size = calc.calculate_non_inferiority(p1, non_inferiority_margin / 100, alpha, power)
+                    else:
+                        # For continuous metrics, use proper calculation
+                        estimated_std = baseline_value * 0.5
+                        sample_size = calc.calculate_continuous_non_inferiority(baseline_value, non_inferiority_margin, estimated_std, alpha, power)
                     
                     # Cache results
                     st.session_state.cached_sample_size = sample_size
-                    st.session_state.cached_runtime = calc.estimate_runtime(sample_size * 2, daily_users)
+                    st.session_state.cached_runtime = calc.estimate_runtime(sample_size, daily_users)
                     st.session_state.last_calculation_key = calculation_key
                     
                     # Auto-save calculated values to session state
                     SessionManager.set_form_data('calculated_sample_size', sample_size)
-                    SessionManager.set_form_data('min_acceptable_rate', baseline_value - non_inferiority_margin)
+                    if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
+                        SessionManager.set_form_data('min_acceptable_rate', baseline_value - non_inferiority_margin)
+                    else:
+                        SessionManager.set_form_data('min_acceptable_mean', baseline_value - non_inferiority_margin)
                     SessionManager.set_form_data('estimated_runtime', st.session_state.cached_runtime)
                     SessionManager.set_form_data('daily_users_calculated', daily_users)
                 else:
@@ -437,17 +470,23 @@ def experiment_designer():
             if test_type == "Superiority Test":
                 st.metric("📊 Sample Size (per group)", f"{sample_size:,}")
                 st.metric("👥 Total Sample Size", f"{sample_size*2:,}")
-                st.metric("📈 Treatment Rate", f"{baseline_value + expected_lift:.1f}%")
+                if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
+                    st.metric("📈 Treatment Rate", f"{baseline_value + expected_lift:.1f}%")
+                else:
+                    st.metric("📈 Treatment Mean", f"{baseline_value + expected_lift:.1f}")
             else:
                 st.metric("📊 Sample Size (per group)", f"{sample_size:,}")
                 st.metric("👥 Total Sample Size", f"{sample_size*2:,}")
-                st.metric("📉 Min Acceptable Rate", f"{baseline_value - non_inferiority_margin:.1f}%")
+                if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
+                    st.metric("📉 Min Acceptable Rate", f"{baseline_value - non_inferiority_margin:.1f}%")
+                else:
+                    st.metric("📉 Min Acceptable Mean", f"{baseline_value - non_inferiority_margin:.1f}")
             
             if runtime:
                 st.metric("⏱️ Estimated Runtime", f"{runtime} days")
-                st.metric("👥 Daily Users per Group", f"{daily_users//2:,.0f}")
-        else:
-            st.markdown('<div class="warning-box">⚠️ <b>Runtime not available</b></div>', unsafe_allow_html=True)
+                st.metric("👥 Daily Users per Group", f"{daily_users/2:,.0f}")
+            else:
+                st.markdown('<div class="warning-box">⚠️ <b>Runtime not available</b></div>', unsafe_allow_html=True)
     
     # Validation and warnings
     if sample_size is not None:
