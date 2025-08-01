@@ -2,6 +2,7 @@ import os
 from notion_client import Client
 from dotenv import load_dotenv
 import streamlit as st
+import time
 
 # Load environment variables
 load_dotenv()
@@ -36,6 +37,72 @@ class NotionIntegration:
         if not self.initiatives_db_id or self.initiatives_db_id == 'your_initiatives_database_id_here':
             st.warning("NOTION_INITIATIVES_DB_ID not configured. EPCVIP Initiatives dropdown will be disabled.")
             self.initiatives_db_id = None
+        
+        # Performance optimization: Cache for campaign and feature details
+        self._campaign_cache = {}
+        self._feature_cache = {}
+        self._last_cache_refresh = 0
+        self._cache_ttl = 300  # 5 minutes
+        
+        # Rate limiting for API calls
+        self._last_api_call = 0
+        self._min_call_interval = 0.1  # Minimum 100ms between API calls
+    
+    def _rate_limit_api_call(self):
+        """Rate limit API calls to prevent overwhelming the API"""
+        current_time = time.time()
+        time_since_last_call = current_time - self._last_api_call
+        
+        if time_since_last_call < self._min_call_interval:
+            time.sleep(self._min_call_interval - time_since_last_call)
+        
+        self._last_api_call = time.time()
+    
+    def _get_cached_campaign_details(self, campaign_id):
+        """Get campaign details with caching"""
+        current_time = time.time()
+        
+        # Refresh cache if expired
+        if current_time - self._last_cache_refresh > self._cache_ttl:
+            self._campaign_cache.clear()
+            self._feature_cache.clear()
+            self._last_cache_refresh = current_time
+        
+        if campaign_id not in self._campaign_cache:
+            try:
+                self._rate_limit_api_call()
+                campaign_details = self.notion.pages.retrieve(campaign_id)
+                campaign_name = campaign_details['properties'].get('Campaign Name', {}).get('title', [{}])[0].get('text', {}).get('content', '')
+                self._campaign_cache[campaign_id] = campaign_name
+            except Exception as e:
+                # Don't show error for every failed call, just log it
+                print(f"Warning: Error retrieving campaign {campaign_id}: {e}")
+                self._campaign_cache[campaign_id] = f"Unknown Campaign ({campaign_id[:8]}...)"
+        
+        return self._campaign_cache[campaign_id]
+    
+    def _get_cached_feature_details(self, feature_id):
+        """Get feature details with caching"""
+        current_time = time.time()
+        
+        # Refresh cache if expired
+        if current_time - self._last_cache_refresh > self._cache_ttl:
+            self._campaign_cache.clear()
+            self._feature_cache.clear()
+            self._last_cache_refresh = current_time
+        
+        if feature_id not in self._feature_cache:
+            try:
+                self._rate_limit_api_call()
+                feature_details = self.notion.pages.retrieve(feature_id)
+                feature_name = feature_details['properties'].get('Name', {}).get('title', [{}])[0].get('text', {}).get('content', '')
+                self._feature_cache[feature_id] = feature_name
+            except Exception as e:
+                # Don't show error for every failed call, just log it
+                print(f"Warning: Error retrieving feature {feature_id}: {e}")
+                self._feature_cache[feature_id] = f"Unknown Feature ({feature_id[:8]}...)"
+        
+        return self._feature_cache[feature_id]
     
     def get_database_schema(self):
         """Get the schema/properties of the Experiments database"""
@@ -222,6 +289,308 @@ class NotionIntegration:
                 return initiative['id']
         return None
     
+    def get_experiments_by_status(self, exclude_statuses=None):
+        """Get experiments filtered by status"""
+        if exclude_statuses is None:
+            exclude_statuses = ["Complete"]  # Only exclude "Complete", allow "Paused" and "Done"
+        
+        try:
+            # Query all experiments
+            response = self.notion.databases.query(self.database_id)
+            pages = response['results']
+            
+            # Filter out experiments with excluded statuses
+            filtered_experiments = []
+            for page in pages:
+                # Get the status property
+                status_prop = page['properties'].get('Feature Status', {})
+                if status_prop.get('type') == 'status' and status_prop.get('status'):
+                    current_status = status_prop['status']['name']
+                    if current_status not in exclude_statuses:
+                        filtered_experiments.append(page)
+            
+            return filtered_experiments
+        except Exception as e:
+            print(f"Warning: Error fetching experiments: {e}")
+            return []
+    
+    def get_experiments_by_campaign(self, campaign_name):
+        """Get experiments for a specific campaign"""
+        try:
+            experiments = self.get_experiments_by_status()
+            campaign_experiments = []
+            
+            for experiment in experiments:
+                # Check campaign relation
+                campaign_prop = experiment['properties'].get('EPCVIP Campaigns', {})
+                if campaign_prop.get('type') == 'relation':
+                    campaign_relations = campaign_prop.get('relation', [])
+                    if campaign_relations:
+                        # Get campaign details using cache
+                        campaign_id = campaign_relations[0]['id']
+                        campaign_title = self._get_cached_campaign_details(campaign_id)
+                        
+                        if campaign_title == campaign_name:
+                            campaign_experiments.append(experiment)
+            
+            return campaign_experiments
+        except Exception as e:
+            st.error(f"Error fetching experiments by campaign: {e}")
+            return []
+    
+    def get_initiatives_for_campaign(self, campaign_name):
+        """Get initiatives that are actually used in experiments for a specific campaign"""
+        try:
+            campaign_experiments = self.get_experiments_by_campaign(campaign_name)
+            initiatives = set()
+            
+            for experiment in campaign_experiments:
+                # Check feature relation
+                feature_prop = experiment['properties'].get('Feature', {})
+                if feature_prop.get('type') == 'relation':
+                    feature_relations = feature_prop.get('relation', [])
+                    if feature_relations:
+                        feature_id = feature_relations[0]['id']
+                        feature_title = self._get_cached_feature_details(feature_id)
+                        if feature_title and not feature_title.startswith("Unknown"):
+                            initiatives.add(feature_title)
+            
+            return list(initiatives)
+        except Exception as e:
+            print(f"Warning: Error fetching initiatives for campaign: {e}")
+            return []
+    
+    def get_campaigns_with_experiments(self):
+        """Get campaigns that actually have experiments"""
+        try:
+            experiments = self.get_experiments_by_status()
+            campaigns = set()
+            
+            for experiment in experiments:
+                # Check campaign relation
+                campaign_prop = experiment['properties'].get('EPCVIP Campaigns', {})
+                if campaign_prop.get('type') == 'relation':
+                    campaign_relations = campaign_prop.get('relation', [])
+                    if campaign_relations:
+                        # Get campaign details using cache
+                        campaign_id = campaign_relations[0]['id']
+                        campaign_title = self._get_cached_campaign_details(campaign_id)
+                        if campaign_title and not campaign_title.startswith("Unknown"):
+                            campaigns.add(campaign_title)
+            
+            return list(campaigns)
+        except Exception as e:
+            print(f"Warning: Error fetching campaigns with experiments: {e}")
+            return []
+    
+    def get_experiment_by_campaign_and_feature(self, campaign_name, feature_name):
+        """Get a specific experiment by campaign and feature"""
+        try:
+            experiments = self.get_experiments_by_status()
+            
+            for experiment in experiments:
+                # Check campaign relation
+                campaign_prop = experiment['properties'].get('EPCVIP Campaigns', {})
+                if campaign_prop.get('type') == 'relation':
+                    campaign_relations = campaign_prop.get('relation', [])
+                    if campaign_relations:
+                        # Get campaign details using cache
+                        campaign_id = campaign_relations[0]['id']
+                        campaign_title = self._get_cached_campaign_details(campaign_id)
+                        
+                        if campaign_title == campaign_name:
+                            # Check feature relation
+                            feature_prop = experiment['properties'].get('Feature', {})
+                            if feature_prop.get('type') == 'relation':
+                                feature_relations = feature_prop.get('relation', [])
+                                if feature_relations:
+                                    feature_id = feature_relations[0]['id']
+                                    feature_title = self._get_cached_feature_details(feature_id)
+                                    
+                                    if feature_title == feature_name:
+                                        return experiment
+            
+            return None
+        except Exception as e:
+            st.error(f"Error fetching experiment by campaign and feature: {e}")
+            return None
+    
+    def get_experiment_content(self, experiment_id):
+        """Get the content/body of an experiment page"""
+        try:
+            blocks = self.notion.blocks.children.list(experiment_id)
+            return blocks['results']
+        except Exception as e:
+            st.error(f"Error fetching experiment content: {e}")
+            return []
+    
+    def parse_experiment_design(self, experiment_content):
+        """Parse experiment content to extract design parameters"""
+        design_data = {}
+        
+        try:
+            # Look for the paragraph block with experiment details
+            for block in experiment_content:
+                if block.get('type') == 'paragraph':
+                    rich_text = block.get('paragraph', {}).get('rich_text', [])
+                    if rich_text:
+                        content = rich_text[0].get('text', {}).get('content', '')
+                        
+                        # Parse the content line by line
+                        lines = content.split('\n')
+                        for line in lines:
+                            line = line.strip()
+                            
+                            # Extract test type
+                            if 'Test Type:' in line:
+                                design_data['test_type'] = line.split('Test Type:')[1].strip()
+                            
+                            # Extract primary metric
+                            elif 'Primary Metric:' in line:
+                                design_data['primary_metric'] = line.split('Primary Metric:')[1].strip()
+                            
+                            # Extract baseline value
+                            elif 'Baseline Value:' in line:
+                                baseline_str = line.split('Baseline Value:')[1].strip()
+                                try:
+                                    design_data['baseline_value'] = float(baseline_str.replace('%', ''))
+                                except:
+                                    design_data['baseline_value'] = None
+                            
+                            # Extract expected lift
+                            elif 'Expected Lift:' in line:
+                                lift_str = line.split('Expected Lift:')[1].strip().replace('%', '')
+                                try:
+                                    design_data['expected_lift'] = float(lift_str)
+                                except:
+                                    design_data['expected_lift'] = None
+                            
+                            # Extract non-inferiority margin
+                            elif 'Non-Inferiority Margin:' in line:
+                                margin_str = line.split('Non-Inferiority Margin:')[1].strip().replace('%', '')
+                                try:
+                                    design_data['non_inferiority_margin'] = float(margin_str)
+                                except:
+                                    design_data['non_inferiority_margin'] = None
+                            
+                            # Extract sample size
+                            elif 'Sample Size:' in line and 'users per group' in line:
+                                sample_str = line.split('Sample Size:')[1].split('users per group')[0].strip().replace(',', '')
+                                try:
+                                    design_data['sample_size'] = int(sample_str)
+                                except:
+                                    design_data['sample_size'] = None
+                            
+                            # Extract total sample size
+                            elif 'Total Sample Size:' in line:
+                                total_str = line.split('Total Sample Size:')[1].split('users')[0].strip().replace(',', '')
+                                try:
+                                    design_data['total_sample_size'] = int(total_str)
+                                except:
+                                    design_data['total_sample_size'] = None
+            
+            return design_data
+            
+        except Exception as e:
+            st.error(f"Error parsing experiment design: {e}")
+            return {}
+    
+    def parse_post_experiment_results(self, experiment_content):
+        """Parse post-experiment results from experiment content"""
+        post_experiment_data = {}
+        
+        try:
+            # Look for the paragraph block with post-experiment results
+            for block in experiment_content:
+                if block.get('type') == 'paragraph':
+                    rich_text = block.get('paragraph', {}).get('rich_text', [])
+                    if rich_text:
+                        content = rich_text[0].get('text', {}).get('content', '')
+                        
+                        # Check if this is the post-experiment results section
+                        if 'POST-EXPERIMENT RESULTS' in content:
+                            # Parse the content line by line
+                            lines = content.split('\n')
+                            for line in lines:
+                                line = line.strip()
+                                
+                                # Extract control sample size
+                                if 'Control Sample Size:' in line:
+                                    sample_str = line.split('Control Sample Size:')[1].strip().replace(',', '')
+                                    # Check if it's still a template placeholder
+                                    if '[' in sample_str or sample_str == '':
+                                        continue
+                                    try:
+                                        post_experiment_data['control_sample_size'] = int(sample_str)
+                                    except:
+                                        post_experiment_data['control_sample_size'] = 0
+                                
+                                # Extract treatment sample size
+                                elif 'Treatment Sample Size:' in line:
+                                    sample_str = line.split('Treatment Sample Size:')[1].strip().replace(',', '')
+                                    # Check if it's still a template placeholder
+                                    if '[' in sample_str or sample_str == '':
+                                        continue
+                                    try:
+                                        post_experiment_data['treatment_sample_size'] = int(sample_str)
+                                    except:
+                                        post_experiment_data['treatment_sample_size'] = 0
+                                
+                                # Extract control applications
+                                elif 'Control Applications:' in line:
+                                    app_str = line.split('Control Applications:')[1].strip().replace(',', '')
+                                    # Check if it's still a template placeholder
+                                    if '[' in app_str or app_str == '':
+                                        continue
+                                    try:
+                                        post_experiment_data['control_applications'] = int(app_str)
+                                    except:
+                                        post_experiment_data['control_applications'] = 0
+                                
+                                # Extract treatment applications
+                                elif 'Treatment Applications:' in line:
+                                    app_str = line.split('Treatment Applications:')[1].strip().replace(',', '')
+                                    # Check if it's still a template placeholder
+                                    if '[' in app_str or app_str == '':
+                                        continue
+                                    try:
+                                        post_experiment_data['treatment_applications'] = int(app_str)
+                                    except:
+                                        post_experiment_data['treatment_applications'] = 0
+                                
+                                # Extract control mean
+                                elif 'Control Mean:' in line:
+                                    mean_str = line.split('Control Mean:')[1].strip()
+                                    # Check if it's still a template placeholder
+                                    if '[' in mean_str or mean_str == '':
+                                        continue
+                                    try:
+                                        post_experiment_data['control_mean'] = float(mean_str)
+                                    except:
+                                        post_experiment_data['control_mean'] = 0.0
+                                
+                                # Extract treatment mean
+                                elif 'Treatment Mean:' in line:
+                                    mean_str = line.split('Treatment Mean:')[1].strip()
+                                    # Check if it's still a template placeholder
+                                    if '[' in mean_str or mean_str == '':
+                                        continue
+                                    try:
+                                        post_experiment_data['treatment_mean'] = float(mean_str)
+                                    except:
+                                        post_experiment_data['treatment_mean'] = 0.0
+            
+            # Check if we have valid data (not template placeholders)
+            if (post_experiment_data.get('control_sample_size', 0) > 0 and 
+                post_experiment_data.get('treatment_sample_size', 0) > 0):
+                return post_experiment_data
+            else:
+                return None
+            
+        except Exception as e:
+            print(f"Warning: Error parsing post-experiment results: {e}")
+            return None
+    
     def create_experiment_page(self, form_data):
         """Create a new experiment page in Notion"""
         try:
@@ -285,9 +654,19 @@ class NotionIntegration:
         """Add formatted content to the Notion page"""
         try:
             # Create formatted content
-            content = self._format_experiment_content(form_data)
+            experiment_content = self._format_experiment_content(form_data)
+            template_content = self._format_post_experiment_template(form_data)
             
-            # Add content as blocks to the page
+            # Check character limits
+            if len(experiment_content) > 1900:  # Leave some buffer
+                st.warning("⚠️ Experiment content is very long. Some details may be truncated.")
+                experiment_content = experiment_content[:1900] + "..."
+            
+            if len(template_content) > 1900:  # Leave some buffer
+                st.warning("⚠️ Template content is very long. Some details may be truncated.")
+                template_content = template_content[:1900] + "..."
+            
+            # Add experiment content as first block
             blocks = [
                 {
                     "object": "block",
@@ -300,12 +679,25 @@ class NotionIntegration:
                     "object": "block",
                     "type": "paragraph",
                     "paragraph": {
-                        "rich_text": [{"type": "text", "text": {"content": content}}]
+                        "rich_text": [{"type": "text", "text": {"content": experiment_content}}]
                     }
                 }
             ]
             
             self.notion.blocks.children.append(page_id, children=blocks)
+            
+            # Add template content as separate block
+            template_blocks = [
+                {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [{"type": "text", "text": {"content": template_content}}]
+                    }
+                }
+            ]
+            
+            self.notion.blocks.children.append(page_id, children=template_blocks)
             
         except Exception as e:
             st.error(f"Error adding content to page: {e}")
@@ -359,4 +751,24 @@ class NotionIntegration:
         content_parts.append(f"Priority: {form_data.get('priority', 'N/A')}")
         content_parts.append(f"Business Goal: {form_data.get('business_goal', 'N/A')}")
         
-        return "\n".join(content_parts) 
+        return "\n".join(content_parts)
+    
+    def _format_post_experiment_template(self, form_data):
+        """Format post-experiment results template as separate content"""
+        template_parts = []
+        
+        template_parts.append("📊 POST-EXPERIMENT RESULTS TEMPLATE")
+        template_parts.append("Add your actual experiment results below:")
+        template_parts.append("Control Sample Size: [Enter actual control group sample size]")
+        template_parts.append("Treatment Sample Size: [Enter actual treatment group sample size]")
+        
+        if form_data.get('primary_metric') in ["App Rate", "Sold Rate", "Fund Rate"]:
+            template_parts.append("Control Applications: [Enter actual control applications]")
+            template_parts.append("Treatment Applications: [Enter actual treatment applications]")
+        else:
+            template_parts.append("Control Mean: [Enter actual control mean]")
+            template_parts.append("Treatment Mean: [Enter actual treatment mean]")
+        
+        template_parts.append("\n💡 **Instructions:** Replace the [bracketed text] with your actual results. The Post-Experiment Analysis tool will automatically read these values.")
+        
+        return "\n".join(template_parts) 

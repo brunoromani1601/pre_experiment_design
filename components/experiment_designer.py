@@ -4,7 +4,7 @@ from core.pdf_generator import PDFGenerator
 from core.session_manager import SessionManager
 from core.notion_integration import NotionIntegration
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=600)  # Cache for 10 minutes (increased from 5)
 def get_notion_initiatives():
     """Cached function to get Notion initiatives"""
     try:
@@ -14,7 +14,7 @@ def get_notion_initiatives():
         st.error(f"❌ Error loading EPCVIP Initiatives: {e}")
         return []
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=600)  # Cache for 10 minutes (increased from 5)
 def get_notion_campaigns():
     """Cached function to get Notion campaigns"""
     try:
@@ -24,7 +24,7 @@ def get_notion_campaigns():
         st.error(f"❌ Error loading EPCVIP Campaigns: {e}")
         return []
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=600)  # Cache for 10 minutes (increased from 5)
 def get_notion_affiliates():
     """Cached function to get Notion affiliates"""
     try:
@@ -74,6 +74,34 @@ def calculate_sample_size(test_type, primary_metric, baseline_value, expected_li
 def experiment_designer():
     st.markdown('<div class="step-header"><h2>🎯 Pre-Experiment Design Tool</h2></div>', unsafe_allow_html=True)
     
+    # Initialize session state for performance
+    if 'designer_initialized' not in st.session_state:
+        st.session_state.designer_initialized = True
+        st.session_state.notion_data_loaded = False
+    
+    # Load Notion data only once
+    if not st.session_state.notion_data_loaded:
+        with st.spinner("Loading Notion data..."):
+            try:
+                # Pre-load all Notion data
+                initiatives = get_notion_initiatives()
+                campaigns = get_notion_campaigns()
+                affiliates = get_notion_affiliates()
+                
+                st.session_state.initiatives_data = initiatives
+                st.session_state.campaigns_data = campaigns
+                st.session_state.affiliates_data = affiliates
+                st.session_state.notion_data_loaded = True
+            except Exception as e:
+                st.error(f"❌ Error loading Notion data: {e}")
+                st.info("Please check your Notion configuration and try refreshing.")
+                return
+    else:
+        # Use cached data
+        initiatives = st.session_state.initiatives_data
+        campaigns = st.session_state.campaigns_data
+        affiliates = st.session_state.affiliates_data
+    
     # ===== STEP 1: BASIC INFORMATION =====
     st.markdown('<div class="step-header"><h3>Step 1: Basic Information</h3></div>', unsafe_allow_html=True)
     
@@ -118,7 +146,7 @@ def experiment_designer():
             SessionManager.set_form_data('stakeholders', stakeholders)
     
     # Add EPCVIP Initiative dropdown with search
-    initiative_options = get_notion_initiatives()
+    initiative_options = initiatives
     initiative_names = [initiative['name'] for initiative in initiative_options]
     
     # Add "None" option for optional selection
@@ -341,51 +369,83 @@ def experiment_designer():
     
     with col3:
         st.subheader("📊 Results")
-        # Calculate sample size based on test type and parameters - NOW LIVE!
-        calc = SampleSizeCalculator()
         
-        if test_type == "Superiority Test" and expected_lift is not None:
-            if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
-                p1 = baseline_value / 100
-                p2 = (baseline_value + expected_lift) / 100
-                sample_size = calc.calculate_proportions(p1, p2, alpha, power)
+        # Only calculate when parameters are stable (debounced)
+        calculation_key = f"{test_type}_{primary_metric}_{baseline_value}_{expected_lift or 0}_{non_inferiority_margin or 0}_{alpha}_{power}"
+        
+        if 'last_calculation_key' not in st.session_state:
+            st.session_state.last_calculation_key = None
+            st.session_state.cached_sample_size = None
+            st.session_state.cached_runtime = None
+        
+        # Show calculation status
+        if calculation_key != st.session_state.last_calculation_key:
+            with st.spinner("🔄 Calculating sample size..."):
+                # Calculate sample size based on test type and parameters
+                calc = SampleSizeCalculator()
                 
-                # Auto-save calculated values to session state
-                SessionManager.set_form_data('calculated_sample_size', sample_size)
-                SessionManager.set_form_data('treatment_rate', baseline_value + expected_lift)
-                
+                if test_type == "Superiority Test" and expected_lift is not None:
+                    if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
+                        p1 = baseline_value / 100
+                        p2 = (baseline_value + expected_lift) / 100
+                        sample_size = calc.calculate_proportions(p1, p2, alpha, power)
+                        
+                        # Cache results
+                        st.session_state.cached_sample_size = sample_size
+                        st.session_state.cached_runtime = calc.estimate_runtime(sample_size * 2, daily_users)
+                        st.session_state.last_calculation_key = calculation_key
+                        
+                        # Auto-save calculated values to session state
+                        SessionManager.set_form_data('calculated_sample_size', sample_size)
+                        SessionManager.set_form_data('treatment_rate', baseline_value + expected_lift)
+                        SessionManager.set_form_data('estimated_runtime', st.session_state.cached_runtime)
+                        SessionManager.set_form_data('daily_users_calculated', daily_users)
+                    else:
+                        # For continuous metrics, provide guidance
+                        st.markdown('<div class="warning-box">⚠️ <b>Continuous Metrics:</b> Use sidebar calculator for detailed calculations.</div>', unsafe_allow_html=True)
+                        sample_size = 10000  # Placeholder
+                        st.session_state.cached_sample_size = sample_size
+                        st.session_state.cached_runtime = calc.estimate_runtime(sample_size * 2, daily_users)
+                        st.session_state.last_calculation_key = calculation_key
+                elif test_type == "Non-Inferiority Test" and non_inferiority_margin is not None:
+                    p1 = baseline_value / 100
+                    sample_size = calc.calculate_non_inferiority(p1, non_inferiority_margin / 100, alpha, power)
+                    
+                    # Cache results
+                    st.session_state.cached_sample_size = sample_size
+                    st.session_state.cached_runtime = calc.estimate_runtime(sample_size * 2, daily_users)
+                    st.session_state.last_calculation_key = calculation_key
+                    
+                    # Auto-save calculated values to session state
+                    SessionManager.set_form_data('calculated_sample_size', sample_size)
+                    SessionManager.set_form_data('min_acceptable_rate', baseline_value - non_inferiority_margin)
+                    SessionManager.set_form_data('estimated_runtime', st.session_state.cached_runtime)
+                    SessionManager.set_form_data('daily_users_calculated', daily_users)
+                else:
+                    # Show placeholder when parameters are not set
+                    sample_size = None
+                    st.session_state.cached_sample_size = None
+                    st.session_state.cached_runtime = None
+                    st.session_state.last_calculation_key = calculation_key
+                    st.markdown('<div class="warning-box">⚠️ <b>Set test parameters above</b></div>', unsafe_allow_html=True)
+        
+        # Display cached results
+        if st.session_state.cached_sample_size is not None:
+            sample_size = st.session_state.cached_sample_size
+            runtime = st.session_state.cached_runtime
+            
+            if test_type == "Superiority Test":
                 st.metric("📊 Sample Size (per group)", f"{sample_size:,}")
                 st.metric("👥 Total Sample Size", f"{sample_size*2:,}")
                 st.metric("📈 Treatment Rate", f"{baseline_value + expected_lift:.1f}%")
             else:
-                # For continuous metrics, provide guidance
-                st.markdown('<div class="warning-box">⚠️ <b>Continuous Metrics:</b> Use sidebar calculator for detailed calculations.</div>', unsafe_allow_html=True)
-                sample_size = 10000  # Placeholder
-        elif test_type == "Non-Inferiority Test" and non_inferiority_margin is not None:
-            p1 = baseline_value / 100
-            sample_size = calc.calculate_non_inferiority(p1, non_inferiority_margin / 100, alpha, power)
+                st.metric("📊 Sample Size (per group)", f"{sample_size:,}")
+                st.metric("👥 Total Sample Size", f"{sample_size*2:,}")
+                st.metric("📉 Min Acceptable Rate", f"{baseline_value - non_inferiority_margin:.1f}%")
             
-            # Auto-save calculated values to session state
-            SessionManager.set_form_data('calculated_sample_size', sample_size)
-            SessionManager.set_form_data('min_acceptable_rate', baseline_value - non_inferiority_margin)
-            
-            st.metric("📊 Sample Size (per group)", f"{sample_size:,}")
-            st.metric("👥 Total Sample Size", f"{sample_size*2:,}")
-            st.metric("📉 Min Acceptable Rate", f"{baseline_value - non_inferiority_margin:.1f}%")
-        else:
-            # Show placeholder when parameters are not set
-            sample_size = None
-            st.markdown('<div class="warning-box">⚠️ <b>Set test parameters above</b></div>', unsafe_allow_html=True)
-        
-        # Runtime calculation
-        if 'sample_size' in locals() and sample_size is not None:
-            runtime = calc.estimate_runtime(sample_size * 2, daily_users)
-            
-            # Auto-save runtime to session state
-            SessionManager.set_form_data('estimated_runtime', runtime)
-            SessionManager.set_form_data('daily_users_calculated', daily_users)
-            st.metric("⏱️ Estimated Runtime", f"{runtime} days")
-            st.metric("👥 Daily Users per Group", f"{daily_users//2:,.0f}")
+            if runtime:
+                st.metric("⏱️ Estimated Runtime", f"{runtime} days")
+                st.metric("👥 Daily Users per Group", f"{daily_users//2:,.0f}")
         else:
             st.markdown('<div class="warning-box">⚠️ <b>Runtime not available</b></div>', unsafe_allow_html=True)
     
@@ -405,7 +465,7 @@ def experiment_designer():
     st.markdown('<div class="step-header"><h3>Step 3: Campaign & Configuration</h3></div>', unsafe_allow_html=True)
     
     # Add EPCVIP Campaigns dropdown
-    campaign_options = get_notion_campaigns()
+    campaign_options = campaigns
     campaign_names = [campaign['name'] for campaign in campaign_options]
     
     # Add "None" option for optional selection
@@ -433,7 +493,7 @@ def experiment_designer():
         SessionManager.set_form_data('epcvip_campaign', epcvip_campaign)
             
     # Add EPCVIP Affiliates dropdown
-    affiliate_options = get_notion_affiliates()
+    affiliate_options = affiliates
     affiliate_names = [affiliate['name'] for affiliate in affiliate_options]
     
     # Add "None" option for optional selection
@@ -602,7 +662,7 @@ def experiment_designer():
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("📊 Experiment Details")
+            st.subheader("�� Experiment Details")
             st.write(f"**Name:** {preview_data['experiment_name']}")
             st.write(f"**Owner:** {preview_data['owner_name']}")
             st.write(f"**Stakeholders:** {preview_data['stakeholders']}")
@@ -695,6 +755,8 @@ def experiment_designer():
     # ===== FINAL SUBMISSION SECTION =====
     st.markdown("---")
     st.markdown('<div class="step-header"><h3>🚀 Create Experiment in Notion</h3></div>', unsafe_allow_html=True)
+    
+    st.info("💡 **Note:** Add actual results in the Notion experiment page after creation. The Post-Experiment Analysis tool will read those results.")
     
     # Create final form data
     saved_sample_size = SessionManager.get_form_data('calculated_sample_size')
