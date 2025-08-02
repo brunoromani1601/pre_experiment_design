@@ -109,7 +109,7 @@ def experiment_designer():
         "🏷️ Experiment Name",
         value=SessionManager.get_form_data('experiment_name', ''),
         placeholder="e.g., Test Dynamic CTA Text on PPC Ad Chain",
-        help="Give your experiment a descriptive name that clearly identifies what you're testing. Include the specific feature, component, or change you're testing.",
+        help="Give your experiment a descriptive name that clearly identifies what you're testing.",
         key="experiment_name_input"
     )
     
@@ -121,7 +121,7 @@ def experiment_designer():
     
     with col1:
         owner_name = st.text_input(
-            "👤 Experiment Owner",
+            "👤 Owner",
             value=SessionManager.get_form_data('owner_name', ''),
             placeholder="e.g., John Smith",
             help="Name of the person responsible for this experiment",
@@ -177,7 +177,7 @@ def experiment_designer():
         "⚙️ Feature Being Tested",
         value=SessionManager.get_form_data('feature_description', ''),
         placeholder="e.g., CTA text change from 'Apply Now' to 'Get Approved Fast'",
-        help="Describe what you're testing in detail. Include any data analysis or insights that led to this experiment idea. Be specific about the change and why you think it will work.",
+        help="Describe what you're testing in detail. Include any data analysis or insights that led to this experiment idea.",
         key="feature_description_input"
     )
     
@@ -213,9 +213,9 @@ def experiment_designer():
         SessionManager.set_form_data('primary_metric', primary_metric)
     
     baseline_value = st.number_input(
-        "📊 Current Baseline Value (%)" if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"] else "📊 Current Baseline Value",
+        "📊 Baseline Value (%)" if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"] else "📊 Baseline Value",
         value=SessionManager.get_form_data('baseline_value', 75.0 if primary_metric == "App Rate" else 0.0),
-        help="Current performance of your primary metric. Make sure this reflects the specific user segment you're targeting.",
+        help="Current performance of your primary metric.",
         key="baseline_value_input"
     )
     
@@ -240,44 +240,53 @@ def experiment_designer():
         "🎯 Test Type",
         ["Superiority Test", "Non-Inferiority Test"],
         index=0 if SessionManager.get_form_data('test_type') == 'Superiority Test' else 1,
-        help="Superiority Test: Testing if the new version performs better than the current version. Non-Inferiority Test: Testing if the new version is not worse than the current version by more than a specified margin.",
+        help="Superiority: Test if treatment is better than control. Non-Inferiority: Test if treatment is not worse than control by a specified margin.",
         key="test_type_input"
     )
     
     # Auto-save to session state
     if test_type != SessionManager.get_form_data('test_type', ''):
         SessionManager.set_form_data('test_type', test_type)
+        # Clear old parameters when switching test types
+        if test_type == "Superiority Test":
+            SessionManager.set_form_data('non_inferiority_margin', None)
+            # Force recalculation by clearing cache
+            if 'last_calculation_key' in st.session_state:
+                st.session_state.last_calculation_key = None
+        else:
+            SessionManager.set_form_data('expected_lift', None)
+            # Force recalculation by clearing cache
+            if 'last_calculation_key' in st.session_state:
+                st.session_state.last_calculation_key = None
     
     # Initialize variables to avoid None issues
     expected_lift = None
     non_inferiority_margin = None
     
-    # Dynamic lift input based on test type - NOW UPDATES IN REAL-TIME!
+    # Dynamic lift input based on test type
     if test_type == "Superiority Test":
         expected_lift = st.number_input(
-            "📈 Expected Lift (% absolute)",
+            "📈 Expected Lift (%)",
             value=SessionManager.get_form_data('expected_lift', 1.2),
-            help="Expected improvement in absolute percentage points. E.g., if baseline is 75% and you expect 76.2%, enter 1.2 (not 1.6% relative). This directly impacts sample size - smaller lifts require larger sample sizes.",
+            help="Expected improvement in percentage points. E.g., if baseline is 75% and you expect 76.2%, enter 1.2. Smaller lifts require larger sample sizes.",
             key="expected_lift_input"
         )
         
         # Auto-save to session state
         if expected_lift != SessionManager.get_form_data('expected_lift', 0.0):
             SessionManager.set_form_data('expected_lift', expected_lift)
-            SessionManager.set_form_data('non_inferiority_margin', None)
         
     else:
         non_inferiority_margin = st.number_input(
-            "📉 Non-Inferiority Margin (% absolute)",
+            "📉 Non-Inferiority Margin (%)",
             value=SessionManager.get_form_data('non_inferiority_margin', 1.0),
-            help="Maximum acceptable decrease in absolute percentage points. E.g., if baseline is 75% and margin is 1%, you're testing that treatment ≥ 74%.",
+            help="Maximum acceptable decrease in percentage points. E.g., if baseline is 75% and margin is 1%, you're testing that treatment ≥ 74%.",
             key="non_inferiority_margin_input"
         )
         
         # Auto-save to session state
         if non_inferiority_margin != SessionManager.get_form_data('non_inferiority_margin', 0.0):
             SessionManager.set_form_data('non_inferiority_margin', non_inferiority_margin)
-            SessionManager.set_form_data('expected_lift', None)
     
     # ===== SAMPLE SIZE & RUNTIME CALCULATION =====
     st.markdown('<div class="subsection-header"><h4>📊 Sample Size & Runtime Calculator</h4></div>', unsafe_allow_html=True)
@@ -316,7 +325,7 @@ def experiment_designer():
     with col2:
         st.subheader("👥 Traffic Volume")
         traffic_period = st.radio(
-            "📅 Traffic Period",
+            "📅 Period",
             ["Daily", "Weekly", "Monthly"],
             index=["Daily", "Weekly", "Monthly"].index(SessionManager.get_form_data('traffic_period', 'Daily')),
             help="Select the time period for your traffic volume",
@@ -375,15 +384,17 @@ def experiment_designer():
         st.subheader("📊 Results")
         
         # Only calculate when parameters are stable (debounced)
-        calculation_key = f"{test_type}_{primary_metric}_{baseline_value}_{expected_lift or 0}_{non_inferiority_margin or 0}_{alpha}_{power}_{daily_users}"
+        # Create a simple calculation key that includes all relevant parameters
+        calculation_key = f"{test_type}_{primary_metric}_{baseline_value}_{expected_lift}_{non_inferiority_margin}_{alpha}_{power}_{daily_users}"
         
         # Validate daily_users calculation
         if daily_users <= 0:
             st.error("❌ Daily users must be greater than 0")
             return
         
-        # Show calculated daily users for validation
-        st.info(f"📊 {traffic_period} traffic: {daily_users:,.0f} daily users (split: {daily_users/2:,.0f} per group)")
+        # Show calculated daily users for validation (less intrusive)
+        if traffic_period != "Daily":
+            st.caption(f"📊 {traffic_period} traffic: {daily_users:,.0f} daily users (split: {daily_users/2:,.0f} per group)")
         
         if 'last_calculation_key' not in st.session_state:
             st.session_state.last_calculation_key = None
@@ -396,11 +407,11 @@ def experiment_designer():
             st.session_state.cached_sample_size = None
             st.session_state.cached_runtime = None
             
-            with st.spinner("🔄 Calculating sample size..."):
+            with st.spinner("🔄 Calculating..."):
                 # Calculate sample size based on test type and parameters
                 calc = SampleSizeCalculator()
                 
-                if test_type == "Superiority Test" and expected_lift is not None:
+                if test_type == "Superiority Test" and expected_lift is not None and expected_lift > 0:
                     if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
                         p1 = baseline_value / 100
                         p2 = (baseline_value + expected_lift) / 100
@@ -432,7 +443,7 @@ def experiment_designer():
                         SessionManager.set_form_data('treatment_mean', baseline_value + expected_lift)
                         SessionManager.set_form_data('estimated_runtime', st.session_state.cached_runtime)
                         SessionManager.set_form_data('daily_users_calculated', daily_users)
-                elif test_type == "Non-Inferiority Test" and non_inferiority_margin is not None:
+                elif test_type == "Non-Inferiority Test" and non_inferiority_margin is not None and non_inferiority_margin > 0:
                     if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
                         p1 = baseline_value / 100
                         sample_size = calc.calculate_non_inferiority(p1, non_inferiority_margin / 100, alpha, power)
@@ -460,7 +471,10 @@ def experiment_designer():
                     st.session_state.cached_sample_size = None
                     st.session_state.cached_runtime = None
                     st.session_state.last_calculation_key = calculation_key
-                    st.markdown('<div class="warning-box">⚠️ <b>Set test parameters above</b></div>', unsafe_allow_html=True)
+                    st.warning("⚠️ Set test parameters above")
+        else:
+            # Show cached results with success indicator
+            st.success("✅ Calculated")
         
         # Display cached results
         if st.session_state.cached_sample_size is not None:
@@ -484,21 +498,34 @@ def experiment_designer():
             
             if runtime:
                 st.metric("⏱️ Estimated Runtime", f"{runtime} days")
-                st.metric("👥 Daily Users per Group", f"{daily_users/2:,.0f}")
+                # Daily users per group is half of total daily traffic (50/50 split)
+                daily_users_per_group = daily_users / 2
+                st.metric("👥 Daily Users per Group", f"{daily_users_per_group:,.0f}")
+                
+                # Add validation to ensure calculations make sense
+                total_sample_needed = sample_size * 2
+                total_traffic_needed = total_sample_needed * 1.2  # 20% buffer
+                expected_days = total_traffic_needed / daily_users
+                
+                if abs(runtime - expected_days) > 1:
+                    st.caption(f"⚠️ Runtime validation: Expected {expected_days:.1f} days, calculated {runtime} days")
             else:
                 st.markdown('<div class="warning-box">⚠️ <b>Runtime not available</b></div>', unsafe_allow_html=True)
-    
-    # Validation and warnings
-    if sample_size is not None:
-        if sample_size > 50000:
-            st.warning("⚠️ Large sample size required. Consider increasing your expected lift or non-inferiority margin.")
-        elif sample_size < 1000:
-            st.success("✅ Sample size is reasonable and achievable.")
         
-        if 'runtime' in locals() and runtime > 30:
-            st.warning("⚠️ Long runtime (>30 days). Consider increasing daily traffic or adjusting test parameters.")
-        elif 'runtime' in locals() and runtime < 7:
-            st.success("✅ Quick experiment - will complete in less than a week.")
+        # Validation and warnings
+        if st.session_state.cached_sample_size is not None:
+            sample_size = st.session_state.cached_sample_size
+            runtime = st.session_state.cached_runtime
+            
+            if sample_size > 50000:
+                st.warning("⚠️ **Large sample size** ({:,} users per group)".format(sample_size))
+            elif sample_size < 1000:
+                st.success("✅ **Reasonable sample size** ({:,} users per group)".format(sample_size))
+            
+            if runtime and runtime > 30:
+                st.warning("⚠️ **Long runtime** ({} days)".format(runtime))
+            elif runtime and runtime < 7:
+                st.success("✅ **Quick experiment** ({} days)".format(runtime))
     
     # ===== STEP 3: CAMPAIGN & CONFIGURATION =====
     st.markdown('<div class="step-header"><h3>Step 3: Campaign & Configuration</h3></div>', unsafe_allow_html=True)
@@ -597,7 +624,7 @@ def experiment_designer():
     
     # Add JIRA Link field
     jira_link = st.text_input(
-        "🔗 JIRA Link (Ad Chain)",
+        "🔗 JIRA Link",
         value=SessionManager.get_form_data('jira_link', ''),
         placeholder="https://jira.company.com/browse/EXP-123",
         help="Optional: Link to the JIRA ticket for this experiment",
