@@ -14,103 +14,102 @@ Successfully migrated the experiment design tool from a single monolithic file (
 ### After (Modular Structure)
 ```
 ├── experiment_design_tool.py          # Main application entry point
-├── experiment_design_tool_backup.py   # Original file backup
+├── backup/                            # Backup files directory
+│   └── experiment_design_tool_backup.py  # Original monolithic file
 ├── core/                              # Business logic modules
 │   ├── __init__.py
 │   ├── calculator.py                  # SampleSizeCalculator class
-│   ├── pdf_generator.py              # PDFGenerator class
-│   └── session_manager.py            # SessionManager class
-├── components/                        # UI page modules (renamed from 'pages' to avoid Streamlit auto-detection)
+│   ├── pdf_generator.py               # PDFGenerator class
+│   └── session_manager.py             # SessionManager class
+├── components/                        # UI page components
 │   ├── __init__.py
-│   ├── experiment_designer.py        # Experiment designer page
-│   └── sample_calculator.py          # Sample size calculator page
-└── ui/                               # UI styling and components
-    ├── __init__.py
-    └── styling.py                    # Custom CSS styling
+│   ├── experiment_designer.py         # Pre-experiment design page
+│   ├── sample_calculator.py           # Sample size calculator page
+│   └── post_experiment_analysis.py    # Post-experiment analysis page
+├── ui/                                # Styling and UI utilities
+│   ├── __init__.py
+│   └── styling.py                     # Custom CSS styling
+├── venv/                              # Virtual environment
+├── requirements.txt                   # Dependencies (updated with plotly)
+├── README.md                          # Project documentation
+└── MIGRATION_SUMMARY.md               # This file
 ```
 
-## Key Benefits
+## Key Improvements
 
-### 1. **Separation of Concerns**
-- **Core Logic**: Business logic separated into dedicated classes
-- **UI Components**: Each page is a separate module
-- **Styling**: CSS styling isolated in its own module
+### 1. **Modular Architecture**
+- **Separation of concerns**: Business logic, UI, and utilities are separated
+- **Reusable components**: Classes can be imported and used independently
+- **Easier testing**: Individual components can be tested in isolation
+- **Better maintainability**: Changes to one component don't affect others
 
-### 2. **Maintainability**
-- **Easier to find**: Specific functionality is in dedicated files
-- **Easier to modify**: Changes are isolated to specific modules
-- **Easier to test**: Individual components can be tested separately
+### 2. **Enhanced Functionality**
+- **Post-Experiment Analysis**: New component for analyzing completed experiments
+  - Supports both binary (app rate) and continuous (revenue/EPL) metrics
+  - Dynamic test selection (superiority vs non-inferiority)
+  - Statistical and practical significance assessment
+  - Interactive visualizations with Plotly
+  - Comprehensive recommendations
 
-### 3. **Reusability**
-- **Core classes**: Can be imported and used in other projects
-- **Modular pages**: Can be easily added, removed, or modified
-- **Styling**: CSS can be reused across different components
+### 3. **Improved User Experience**
+- **Clean navigation**: Three main components accessible via dropdown
+- **Consistent styling**: Unified CSS across all components
+- **Better organization**: Logical grouping of related functionality
 
-### 4. **Scalability**
-- **New features**: Can be added as new modules
-- **Team development**: Multiple developers can work on different modules
-- **Code review**: Easier to review smaller, focused files
+### 4. **Technical Improvements**
+- **Session management**: Centralized state management
+- **Error handling**: Better error handling and validation
+- **Code reusability**: Shared utilities and styling
+- **Dependency management**: Updated requirements with new dependencies
 
-## Migration Process
+## Component Details
 
-### Phase 1: Core Classes Extraction
-1. **SampleSizeCalculator**: Extracted statistical calculation methods
-2. **PDFGenerator**: Extracted PDF generation functionality
-3. **SessionManager**: Created new class for session state management
+### Core Modules (`core/`)
+- **`calculator.py`**: Sample size calculations for various test types
+- **`pdf_generator.py`**: PDF report generation functionality
+- **`session_manager.py`**: Centralized session state management
 
-### Phase 2: UI Components Separation
-1. **Sample Calculator Page**: Extracted to `components/sample_calculator.py`
-2. **Experiment Designer Page**: Extracted to `components/experiment_designer.py`
-3. **Styling**: Moved CSS to `ui/styling.py`
+### UI Components (`components/`)
+- **`experiment_designer.py`**: Pre-experiment design and planning
+- **`sample_calculator.py`**: Sample size and power calculations
+- **`post_experiment_analysis.py`**: Post-experiment results analysis
 
-### Phase 3: Main Application Refactor
-1. **Updated imports**: Main file now imports from modular components
-2. **Simplified structure**: Main file is now just 36 lines vs 986 lines
-3. **Clean navigation**: Sidebar navigation remains unchanged
+### UI Utilities (`ui/`)
+- **`styling.py`**: Custom CSS for consistent styling across components
 
-### Phase 4: Streamlit Multi-Page Fix
-1. **Directory rename**: Renamed `pages/` to `components/` to prevent Streamlit's automatic multi-page detection
-2. **Updated imports**: Changed import paths from `pages.*` to `components.*`
-3. **Clean sidebar**: Now only shows custom navigation dropdown without default Streamlit page options
+## New Features Added
 
-## File Size Comparison
+### Post-Experiment Analysis Component
+- **Dynamic test selection** based on metric type and experiment type
+- **Statistical analysis** for both binary and continuous outcomes
+- **Practical significance** assessment using MDE
+- **Power analysis** (achieved vs. planned power)
+- **Interactive visualizations** with confidence intervals
+- **Clear recommendations** for implementation decisions
 
-| Component | Before | After | Reduction |
-|-----------|--------|-------|-----------|
-| Main file | 986 lines | 36 lines | 96% |
-| Core logic | Mixed | 196 lines | Separated |
-| UI pages | Mixed | 764 lines | Separated |
-| Styling | Mixed | 50 lines | Separated |
+## Migration Benefits
 
-## Testing Results
+### For Developers
+- **96% reduction** in main file size (986 → 36 lines)
+- **Easier debugging**: Issues can be isolated to specific components
+- **Faster development**: New features can be added as separate components
+- **Better code organization**: Clear structure and naming conventions
 
-✅ **All imports successful**: Modular components import correctly  
-✅ **Functionality preserved**: All features work exactly as before  
-✅ **Session state**: Properly managed through SessionManager  
-✅ **PDF generation**: Works with modular PDFGenerator  
-✅ **Sample calculations**: All statistical methods preserved  
-✅ **Clean navigation**: Only custom dropdown visible, no default Streamlit elements  
-
-## Usage
-
-The application works exactly the same as before:
-
-```bash
-streamlit run experiment_design_tool.py
-```
-
-No changes to user experience - all functionality preserved while improving code organization.
+### For Users
+- **Enhanced functionality**: New post-experiment analysis capabilities
+- **Improved navigation**: Clear separation between pre and post-experiment tools
+- **Better visualizations**: Interactive charts and graphs
+- **Comprehensive analysis**: Both statistical and practical significance
 
 ## Future Enhancements
+- **Additional statistical tests**: Chi-square, ANOVA, etc.
+- **More visualization options**: Time series, funnel analysis
+- **Export capabilities**: Excel, CSV, additional PDF formats
+- **Advanced analytics**: Bayesian analysis, sequential testing
+- **Integration capabilities**: API endpoints for external data sources
 
-With the modular structure, future enhancements become much easier:
-
-1. **New pages**: Add new files to `components/` directory
-2. **New core features**: Add new classes to `core/` directory
-3. **UI improvements**: Modify `ui/styling.py` for styling changes
-4. **Testing**: Individual modules can be unit tested
-5. **Documentation**: Each module can have its own documentation
-
-## Backup
-
-The original monolithic file is preserved as `experiment_design_tool_backup.py` for reference or rollback if needed. 
+## Technical Notes
+- **Dependencies**: Added plotly for interactive visualizations
+- **Compatibility**: Maintains all existing functionality
+- **Performance**: Improved loading times through modular imports
+- **Scalability**: Easy to add new components and features 

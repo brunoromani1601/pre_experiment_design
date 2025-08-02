@@ -2,9 +2,105 @@ import streamlit as st
 from core.calculator import SampleSizeCalculator
 from core.pdf_generator import PDFGenerator
 from core.session_manager import SessionManager
+from core.notion_integration import NotionIntegration
+
+@st.cache_data(ttl=600)  # Cache for 10 minutes (increased from 5)
+def get_notion_initiatives():
+    """Cached function to get Notion initiatives"""
+    try:
+        notion_integration = NotionIntegration()
+        return notion_integration.get_initiative_options()
+    except Exception as e:
+        st.error(f"❌ Error loading EPCVIP Initiatives: {e}")
+        return []
+
+@st.cache_data(ttl=600)  # Cache for 10 minutes (increased from 5)
+def get_notion_campaigns():
+    """Cached function to get Notion campaigns"""
+    try:
+        notion_integration = NotionIntegration()
+        return notion_integration.get_campaign_options()
+    except Exception as e:
+        st.error(f"❌ Error loading EPCVIP Campaigns: {e}")
+        return []
+
+@st.cache_data(ttl=600)  # Cache for 10 minutes (increased from 5)
+def get_notion_affiliates():
+    """Cached function to get Notion affiliates"""
+    try:
+        notion_integration = NotionIntegration()
+        return notion_integration.get_affiliate_options()
+    except Exception as e:
+        st.error(f"❌ Error loading EPCVIP Affiliates: {e}")
+        return []
+
+def debounced_session_update(key, value, current_value):
+    """Update session state only if value has actually changed"""
+    if value != current_value:
+        SessionManager.set_form_data(key, value)
+        return True
+    return False
+
+def log_performance_issue(component_name):
+    """Log performance issues for debugging"""
+    if 'performance_issues' not in st.session_state:
+        st.session_state.performance_issues = {}
+    
+    if component_name not in st.session_state.performance_issues:
+        st.session_state.performance_issues[component_name] = 0
+    
+    st.session_state.performance_issues[component_name] += 1
+    
+    # Only show warning after multiple issues
+    if st.session_state.performance_issues[component_name] > 5:
+        st.warning(f"⚠️ Performance issue detected in {component_name}. Consider refreshing the page.")
+
+@st.cache_data(ttl=60)  # Cache for 1 minute
+def calculate_sample_size(test_type, primary_metric, baseline_value, expected_lift=None, non_inferiority_margin=None, alpha=0.05, power=0.80):
+    """Cached sample size calculation"""
+    calc = SampleSizeCalculator()
+    
+    if test_type == "Superiority Test" and expected_lift is not None:
+        if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
+            p1 = baseline_value / 100
+            p2 = (baseline_value + expected_lift) / 100
+            return calc.calculate_proportions(p1, p2, alpha, power)
+    elif test_type == "Non-Inferiority Test" and non_inferiority_margin is not None:
+        p1 = baseline_value / 100
+        return calc.calculate_non_inferiority(p1, non_inferiority_margin / 100, alpha, power)
+    
+    return None
 
 def experiment_designer():
     st.markdown('<div class="step-header"><h2>🎯 Pre-Experiment Design Tool</h2></div>', unsafe_allow_html=True)
+    
+    # Initialize session state for performance
+    if 'designer_initialized' not in st.session_state:
+        st.session_state.designer_initialized = True
+        st.session_state.notion_data_loaded = False
+    
+    # Load Notion data only once
+    if not st.session_state.notion_data_loaded:
+        with st.spinner("Loading Notion data..."):
+            try:
+                # Pre-load all Notion data
+                initiatives = get_notion_initiatives()
+                campaigns = get_notion_campaigns()
+                affiliates = get_notion_affiliates()
+                
+                st.session_state.initiatives_data = initiatives
+                st.session_state.campaigns_data = campaigns
+                st.session_state.affiliates_data = affiliates
+                st.session_state.notion_data_loaded = True
+            except Exception as e:
+                st.error(f"❌ Error loading Notion data: {e}")
+                st.info("Please check your Notion configuration and try refreshing.")
+                return
+    else:
+        # Use cached data
+        initiatives = st.session_state.initiatives_data
+        campaigns = st.session_state.campaigns_data
+        affiliates = st.session_state.affiliates_data
     
     # ===== STEP 1: BASIC INFORMATION =====
     st.markdown('<div class="step-header"><h3>Step 1: Basic Information</h3></div>', unsafe_allow_html=True)
@@ -13,7 +109,7 @@ def experiment_designer():
         "🏷️ Experiment Name",
         value=SessionManager.get_form_data('experiment_name', ''),
         placeholder="e.g., Test Dynamic CTA Text on PPC Ad Chain",
-        help="Give your experiment a descriptive name that clearly identifies what you're testing. Include the specific feature, component, or change you're testing.",
+        help="Give your experiment a descriptive name that clearly identifies what you're testing.",
         key="experiment_name_input"
     )
     
@@ -21,11 +117,67 @@ def experiment_designer():
     if experiment_name != SessionManager.get_form_data('experiment_name', ''):
         SessionManager.set_form_data('experiment_name', experiment_name)
     
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        owner_name = st.text_input(
+            "👤 Owner",
+            value=SessionManager.get_form_data('owner_name', ''),
+            placeholder="e.g., John Smith",
+            help="Name of the person responsible for this experiment",
+            key="owner_name_input"
+        )
+        
+        # Auto-save to session state
+        if owner_name != SessionManager.get_form_data('owner_name', ''):
+            SessionManager.set_form_data('owner_name', owner_name)
+    
+    with col2:
+        stakeholders = st.text_input(
+            "👥 Stakeholders",
+            value=SessionManager.get_form_data('stakeholders', ''),
+            placeholder="e.g., Marketing Team, Product Manager",
+            help="People or teams who should be informed about this experiment",
+            key="stakeholders_input"
+        )
+        
+        # Auto-save to session state
+        if stakeholders != SessionManager.get_form_data('stakeholders', ''):
+            SessionManager.set_form_data('stakeholders', stakeholders)
+    
+    # Add EPCVIP Initiative dropdown with search
+    initiative_options = initiatives
+    initiative_names = [initiative['name'] for initiative in initiative_options]
+    
+    # Add "None" option for optional selection
+    initiative_names_with_none = ["None"] + initiative_names
+    
+    # Get saved value and handle case where it might not be in current list
+    saved_initiative = SessionManager.get_form_data('epcvip_initiative', 'None')
+    if saved_initiative not in initiative_names_with_none:
+        saved_initiative = 'None'
+    
+    epcvip_initiative = st.selectbox(
+        "🎯 EPCVIP Initiative",
+        initiative_names_with_none,
+        index=initiative_names_with_none.index(saved_initiative),
+        help="Select the EPCVIP Initiative from Notion database (optional). Type to search through 100+ initiatives.",
+        key="epcvip_initiative_input"
+    )
+    
+    # Convert "None" to empty string for storage
+    if epcvip_initiative == "None":
+        epcvip_initiative = ""
+    
+    # Auto-save to session state
+    if epcvip_initiative != SessionManager.get_form_data('epcvip_initiative', ''):
+        SessionManager.set_form_data('epcvip_initiative', epcvip_initiative)
+            
     feature_description = st.text_area(
         "⚙️ Feature Being Tested",
         value=SessionManager.get_form_data('feature_description', ''),
         placeholder="e.g., CTA text change from 'Apply Now' to 'Get Approved Fast'",
-        help="Describe what you're testing in detail. Include any data analysis or insights that led to this experiment idea. Be specific about the change and why you think it will work.",
+        help="Describe what you're testing in detail. Include any data analysis or insights that led to this experiment idea.",
         key="feature_description_input"
     )
     
@@ -61,9 +213,9 @@ def experiment_designer():
         SessionManager.set_form_data('primary_metric', primary_metric)
     
     baseline_value = st.number_input(
-        "📊 Current Baseline Value (%)" if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"] else "📊 Current Baseline Value",
+        "📊 Baseline Value (%)" if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"] else "📊 Baseline Value",
         value=SessionManager.get_form_data('baseline_value', 75.0 if primary_metric == "App Rate" else 0.0),
-        help="Current performance of your primary metric. Make sure this reflects the specific user segment you're targeting.",
+        help="Current performance of your primary metric.",
         key="baseline_value_input"
     )
     
@@ -88,44 +240,53 @@ def experiment_designer():
         "🎯 Test Type",
         ["Superiority Test", "Non-Inferiority Test"],
         index=0 if SessionManager.get_form_data('test_type') == 'Superiority Test' else 1,
-        help="Superiority Test: Testing if the new version performs better than the current version. Non-Inferiority Test: Testing if the new version is not worse than the current version by more than a specified margin.",
+        help="Superiority: Test if treatment is better than control. Non-Inferiority: Test if treatment is not worse than control by a specified margin.",
         key="test_type_input"
     )
     
     # Auto-save to session state
     if test_type != SessionManager.get_form_data('test_type', ''):
         SessionManager.set_form_data('test_type', test_type)
+        # Clear old parameters when switching test types
+        if test_type == "Superiority Test":
+            SessionManager.set_form_data('non_inferiority_margin', None)
+            # Force recalculation by clearing cache
+            if 'last_calculation_key' in st.session_state:
+                st.session_state.last_calculation_key = None
+        else:
+            SessionManager.set_form_data('expected_lift', None)
+            # Force recalculation by clearing cache
+            if 'last_calculation_key' in st.session_state:
+                st.session_state.last_calculation_key = None
     
     # Initialize variables to avoid None issues
     expected_lift = None
     non_inferiority_margin = None
     
-    # Dynamic lift input based on test type - NOW UPDATES IN REAL-TIME!
+    # Dynamic lift input based on test type
     if test_type == "Superiority Test":
         expected_lift = st.number_input(
-            "📈 Expected Lift (% absolute)",
+            "📈 Expected Lift (%)",
             value=SessionManager.get_form_data('expected_lift', 1.2),
-            help="Expected improvement in absolute percentage points. E.g., if baseline is 75% and you expect 76.2%, enter 1.2 (not 1.6% relative). This directly impacts sample size - smaller lifts require larger sample sizes.",
+            help="Expected improvement in percentage points. E.g., if baseline is 75% and you expect 76.2%, enter 1.2. Smaller lifts require larger sample sizes.",
             key="expected_lift_input"
         )
         
         # Auto-save to session state
         if expected_lift != SessionManager.get_form_data('expected_lift', 0.0):
             SessionManager.set_form_data('expected_lift', expected_lift)
-            SessionManager.set_form_data('non_inferiority_margin', None)
         
     else:
         non_inferiority_margin = st.number_input(
-            "📉 Non-Inferiority Margin (% absolute)",
+            "📉 Non-Inferiority Margin (%)",
             value=SessionManager.get_form_data('non_inferiority_margin', 1.0),
-            help="Maximum acceptable decrease in absolute percentage points. E.g., if baseline is 75% and margin is 1%, you're testing that treatment ≥ 74%.",
+            help="Maximum acceptable decrease in percentage points. E.g., if baseline is 75% and margin is 1%, you're testing that treatment ≥ 74%.",
             key="non_inferiority_margin_input"
         )
         
         # Auto-save to session state
         if non_inferiority_margin != SessionManager.get_form_data('non_inferiority_margin', 0.0):
             SessionManager.set_form_data('non_inferiority_margin', non_inferiority_margin)
-            SessionManager.set_form_data('expected_lift', None)
     
     # ===== SAMPLE SIZE & RUNTIME CALCULATION =====
     st.markdown('<div class="subsection-header"><h4>📊 Sample Size & Runtime Calculator</h4></div>', unsafe_allow_html=True)
@@ -164,7 +325,7 @@ def experiment_designer():
     with col2:
         st.subheader("👥 Traffic Volume")
         traffic_period = st.radio(
-            "📅 Traffic Period",
+            "📅 Period",
             ["Daily", "Weekly", "Monthly"],
             index=["Daily", "Weekly", "Monthly"].index(SessionManager.get_form_data('traffic_period', 'Daily')),
             help="Select the time period for your traffic volume",
@@ -201,6 +362,8 @@ def experiment_designer():
                 SessionManager.set_form_data('weekly_users', weekly_users)
             
             daily_users = weekly_users / 7
+            # Also save the calculated daily users
+            SessionManager.set_form_data('daily_users', daily_users)
         else:  # Monthly
             monthly_users = st.number_input(
                 "👥 Monthly Users",
@@ -214,83 +377,214 @@ def experiment_designer():
                 SessionManager.set_form_data('monthly_users', monthly_users)
             
             daily_users = monthly_users / 30
+            # Also save the calculated daily users
+            SessionManager.set_form_data('daily_users', daily_users)
     
     with col3:
         st.subheader("📊 Results")
-        # Calculate sample size based on test type and parameters - NOW LIVE!
-        calc = SampleSizeCalculator()
         
-        if test_type == "Superiority Test" and expected_lift is not None:
-            if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
-                p1 = baseline_value / 100
-                p2 = (baseline_value + expected_lift) / 100
-                sample_size = calc.calculate_proportions(p1, p2, alpha, power)
+        # Only calculate when parameters are stable (debounced)
+        # Create a simple calculation key that includes all relevant parameters
+        calculation_key = f"{test_type}_{primary_metric}_{baseline_value}_{expected_lift}_{non_inferiority_margin}_{alpha}_{power}_{daily_users}"
+        
+        # Validate daily_users calculation
+        if daily_users <= 0:
+            st.error("❌ Daily users must be greater than 0")
+            return
+        
+        # Show calculated daily users for validation (less intrusive)
+        if traffic_period != "Daily":
+            st.caption(f"📊 {traffic_period} traffic: {daily_users:,.0f} daily users (split: {daily_users/2:,.0f} per group)")
+        
+        if 'last_calculation_key' not in st.session_state:
+            st.session_state.last_calculation_key = None
+            st.session_state.cached_sample_size = None
+            st.session_state.cached_runtime = None
+        
+        # Show calculation status
+        if calculation_key != st.session_state.last_calculation_key:
+            # Clear cache when parameters change
+            st.session_state.cached_sample_size = None
+            st.session_state.cached_runtime = None
+            
+            with st.spinner("🔄 Calculating..."):
+                # Calculate sample size based on test type and parameters
+                calc = SampleSizeCalculator()
                 
-                # Auto-save calculated values to session state
-                SessionManager.set_form_data('calculated_sample_size', sample_size)
-                SessionManager.set_form_data('treatment_rate', baseline_value + expected_lift)
-                
+                if test_type == "Superiority Test" and expected_lift is not None and expected_lift > 0:
+                    if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
+                        p1 = baseline_value / 100
+                        p2 = (baseline_value + expected_lift) / 100
+                        sample_size = calc.calculate_proportions(p1, p2, alpha, power)
+                        
+                        # Cache results
+                        st.session_state.cached_sample_size = sample_size
+                        st.session_state.cached_runtime = calc.estimate_runtime(sample_size, daily_users)
+                        st.session_state.last_calculation_key = calculation_key
+                        
+                        # Auto-save calculated values to session state
+                        SessionManager.set_form_data('calculated_sample_size', sample_size)
+                        SessionManager.set_form_data('treatment_rate', baseline_value + expected_lift)
+                        SessionManager.set_form_data('estimated_runtime', st.session_state.cached_runtime)
+                        SessionManager.set_form_data('daily_users_calculated', daily_users)
+                    else:
+                        # For continuous metrics, use proper calculation
+                        # Estimate standard deviation based on baseline (common assumption: CV = 0.5)
+                        estimated_std = baseline_value * 0.5
+                        sample_size = calc.calculate_continuous_superiority(baseline_value, expected_lift, estimated_std, alpha, power)
+                        
+                        # Cache results
+                        st.session_state.cached_sample_size = sample_size
+                        st.session_state.cached_runtime = calc.estimate_runtime(sample_size, daily_users)
+                        st.session_state.last_calculation_key = calculation_key
+                        
+                        # Auto-save calculated values to session state
+                        SessionManager.set_form_data('calculated_sample_size', sample_size)
+                        SessionManager.set_form_data('treatment_mean', baseline_value + expected_lift)
+                        SessionManager.set_form_data('estimated_runtime', st.session_state.cached_runtime)
+                        SessionManager.set_form_data('daily_users_calculated', daily_users)
+                elif test_type == "Non-Inferiority Test" and non_inferiority_margin is not None and non_inferiority_margin > 0:
+                    if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
+                        p1 = baseline_value / 100
+                        sample_size = calc.calculate_non_inferiority(p1, non_inferiority_margin / 100, alpha, power)
+                    else:
+                        # For continuous metrics, use proper calculation
+                        estimated_std = baseline_value * 0.5
+                        sample_size = calc.calculate_continuous_non_inferiority(baseline_value, non_inferiority_margin, estimated_std, alpha, power)
+                    
+                    # Cache results
+                    st.session_state.cached_sample_size = sample_size
+                    st.session_state.cached_runtime = calc.estimate_runtime(sample_size, daily_users)
+                    st.session_state.last_calculation_key = calculation_key
+                    
+                    # Auto-save calculated values to session state
+                    SessionManager.set_form_data('calculated_sample_size', sample_size)
+                    if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
+                        SessionManager.set_form_data('min_acceptable_rate', baseline_value - non_inferiority_margin)
+                    else:
+                        SessionManager.set_form_data('min_acceptable_mean', baseline_value - non_inferiority_margin)
+                    SessionManager.set_form_data('estimated_runtime', st.session_state.cached_runtime)
+                    SessionManager.set_form_data('daily_users_calculated', daily_users)
+                else:
+                    # Show placeholder when parameters are not set
+                    sample_size = None
+                    st.session_state.cached_sample_size = None
+                    st.session_state.cached_runtime = None
+                    st.session_state.last_calculation_key = calculation_key
+                    st.warning("⚠️ Set test parameters above")
+        else:
+            # Show cached results with success indicator
+            st.success("✅ Calculated")
+        
+        # Display cached results
+        if st.session_state.cached_sample_size is not None:
+            sample_size = st.session_state.cached_sample_size
+            runtime = st.session_state.cached_runtime
+            
+            if test_type == "Superiority Test":
                 st.metric("📊 Sample Size (per group)", f"{sample_size:,}")
                 st.metric("👥 Total Sample Size", f"{sample_size*2:,}")
-                st.metric("📈 Treatment Rate", f"{baseline_value + expected_lift:.1f}%")
+                if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
+                    st.metric("📈 Treatment Rate", f"{baseline_value + expected_lift:.1f}%")
+                else:
+                    st.metric("📈 Treatment Mean", f"{baseline_value + expected_lift:.1f}")
             else:
-                # For continuous metrics, provide guidance
-                st.markdown('<div class="warning-box">⚠️ <b>Continuous Metrics:</b> Use sidebar calculator for detailed calculations.</div>', unsafe_allow_html=True)
-                sample_size = 10000  # Placeholder
-        elif test_type == "Non-Inferiority Test" and non_inferiority_margin is not None:
-            p1 = baseline_value / 100
-            sample_size = calc.calculate_non_inferiority(p1, non_inferiority_margin / 100, alpha, power)
+                st.metric("📊 Sample Size (per group)", f"{sample_size:,}")
+                st.metric("👥 Total Sample Size", f"{sample_size*2:,}")
+                if primary_metric in ["App Rate", "Sold Rate", "Fund Rate"]:
+                    st.metric("📉 Min Acceptable Rate", f"{baseline_value - non_inferiority_margin:.1f}%")
+                else:
+                    st.metric("📉 Min Acceptable Mean", f"{baseline_value - non_inferiority_margin:.1f}")
             
-            # Auto-save calculated values to session state
-            SessionManager.set_form_data('calculated_sample_size', sample_size)
-            SessionManager.set_form_data('min_acceptable_rate', baseline_value - non_inferiority_margin)
-            
-            st.metric("📊 Sample Size (per group)", f"{sample_size:,}")
-            st.metric("👥 Total Sample Size", f"{sample_size*2:,}")
-            st.metric("📉 Min Acceptable Rate", f"{baseline_value - non_inferiority_margin:.1f}%")
-        else:
-            # Show placeholder when parameters are not set
-            sample_size = None
-            st.markdown('<div class="warning-box">⚠️ <b>Set test parameters above</b></div>', unsafe_allow_html=True)
+            if runtime:
+                st.metric("⏱️ Estimated Runtime", f"{runtime} days")
+                # Daily users per group is half of total daily traffic (50/50 split)
+                daily_users_per_group = daily_users / 2
+                st.metric("👥 Daily Users per Group", f"{daily_users_per_group:,.0f}")
+                
+                # Add validation to ensure calculations make sense
+                total_sample_needed = sample_size * 2
+                total_traffic_needed = total_sample_needed * 1.2  # 20% buffer
+                expected_days = total_traffic_needed / daily_users
+                
+                if abs(runtime - expected_days) > 1:
+                    st.caption(f"⚠️ Runtime validation: Expected {expected_days:.1f} days, calculated {runtime} days")
+            else:
+                st.markdown('<div class="warning-box">⚠️ <b>Runtime not available</b></div>', unsafe_allow_html=True)
         
-        # Runtime calculation
-        if 'sample_size' in locals() and sample_size is not None:
-            runtime = calc.estimate_runtime(sample_size * 2, daily_users)
+        # Validation and warnings
+        if st.session_state.cached_sample_size is not None:
+            sample_size = st.session_state.cached_sample_size
+            runtime = st.session_state.cached_runtime
             
-            # Auto-save runtime to session state
-            SessionManager.set_form_data('estimated_runtime', runtime)
-            SessionManager.set_form_data('daily_users_calculated', daily_users)
-            st.metric("⏱️ Estimated Runtime", f"{runtime} days")
-            st.metric("👥 Daily Users per Group", f"{daily_users//2:,.0f}")
-        else:
-            st.markdown('<div class="warning-box">⚠️ <b>Runtime not available</b></div>', unsafe_allow_html=True)
-    
-    # Validation and warnings
-    if sample_size is not None:
-        if sample_size > 50000:
-            st.warning("⚠️ Large sample size required. Consider increasing your expected lift or non-inferiority margin.")
-        elif sample_size < 1000:
-            st.success("✅ Sample size is reasonable and achievable.")
-        
-        if 'runtime' in locals() and runtime > 30:
-            st.warning("⚠️ Long runtime (>30 days). Consider increasing daily traffic or adjusting test parameters.")
-        elif 'runtime' in locals() and runtime < 7:
-            st.success("✅ Quick experiment - will complete in less than a week.")
+            if sample_size > 50000:
+                st.warning("⚠️ **Large sample size** ({:,} users per group)".format(sample_size))
+            elif sample_size < 1000:
+                st.success("✅ **Reasonable sample size** ({:,} users per group)".format(sample_size))
+            
+            if runtime and runtime > 30:
+                st.warning("⚠️ **Long runtime** ({} days)".format(runtime))
+            elif runtime and runtime < 7:
+                st.success("✅ **Quick experiment** ({} days)".format(runtime))
     
     # ===== STEP 3: CAMPAIGN & CONFIGURATION =====
     st.markdown('<div class="step-header"><h3>Step 3: Campaign & Configuration</h3></div>', unsafe_allow_html=True)
     
-    campaign = st.selectbox(
-        "🎯 Campaign",
-        ["FastLoanAdvance-Google", "GraceLoanAdvance-Google", "5k Dupes"],
-        index=["FastLoanAdvance-Google", "GraceLoanAdvance-Google", "5k Dupes"].index(SessionManager.get_form_data('campaign', 'FastLoanAdvance-Google')),
-        help="Which campaign will this experiment run in?",
-        key="campaign_input"
+    # Add EPCVIP Campaigns dropdown
+    campaign_options = campaigns
+    campaign_names = [campaign['name'] for campaign in campaign_options]
+    
+    # Add "None" option for optional selection
+    campaign_names_with_none = ["None"] + campaign_names
+    
+    # Get saved value and handle case where it might not be in current list
+    saved_campaign = SessionManager.get_form_data('epcvip_campaign', 'None')
+    if saved_campaign not in campaign_names_with_none:
+        saved_campaign = 'None'
+    
+    epcvip_campaign = st.selectbox(
+        "🎯 EPCVIP Campaign",
+        campaign_names_with_none,
+        index=campaign_names_with_none.index(saved_campaign),
+        help="Select the EPCVIP Campaign from Notion database (optional)",
+        key="epcvip_campaign_input"
     )
     
+    # Convert "None" to empty string for storage
+    if epcvip_campaign == "None":
+        epcvip_campaign = ""
+    
     # Auto-save to session state
-    if campaign != SessionManager.get_form_data('campaign', ''):
-        SessionManager.set_form_data('campaign', campaign)
+    if epcvip_campaign != SessionManager.get_form_data('epcvip_campaign', ''):
+        SessionManager.set_form_data('epcvip_campaign', epcvip_campaign)
+            
+    # Add EPCVIP Affiliates dropdown
+    affiliate_options = affiliates
+    affiliate_names = [affiliate['name'] for affiliate in affiliate_options]
+    
+    # Add "None" option for optional selection
+    affiliate_names_with_none = ["None"] + affiliate_names
+    
+    # Get saved value and handle case where it might not be in current list
+    saved_affiliate = SessionManager.get_form_data('epcvip_affiliate', 'None')
+    if saved_affiliate not in affiliate_names_with_none:
+        saved_affiliate = 'None'
+    
+    epcvip_affiliate = st.selectbox(
+        "🤝 EPCVIP Affiliate",
+        affiliate_names_with_none,
+        index=affiliate_names_with_none.index(saved_affiliate),
+        help="Select the EPCVIP Affiliate from Notion database (optional)",
+        key="epcvip_affiliate_input"
+    )
+    
+    # Convert "None" to empty string for storage
+    if epcvip_affiliate == "None":
+        epcvip_affiliate = ""
+    
+    # Auto-save to session state
+    if epcvip_affiliate != SessionManager.get_form_data('epcvip_affiliate', ''):
+        SessionManager.set_form_data('epcvip_affiliate', epcvip_affiliate)
     
     traffic_type = st.selectbox(
         "🚦 Traffic Type",
@@ -327,6 +621,19 @@ def experiment_designer():
     # Auto-save to session state
     if treatment_variant != SessionManager.get_form_data('treatment_variant', ''):
         SessionManager.set_form_data('treatment_variant', treatment_variant)
+    
+    # Add JIRA Link field
+    jira_link = st.text_input(
+        "🔗 JIRA Link",
+        value=SessionManager.get_form_data('jira_link', ''),
+        placeholder="https://jira.company.com/browse/EXP-123",
+        help="Optional: Link to the JIRA ticket for this experiment",
+        key="jira_link_input"
+    )
+    
+    # Auto-save to session state
+    if jira_link != SessionManager.get_form_data('jira_link', ''):
+        SessionManager.set_form_data('jira_link', jira_link)
     
     # ===== STEP 4: TARGET AUDIENCE =====
     st.markdown('<div class="step-header"><h3>Step 4: Target Audience</h3></div>', unsafe_allow_html=True)
@@ -392,6 +699,8 @@ def experiment_designer():
         # Create preview data
         preview_data = {
             'experiment_name': experiment_name or "Untitled Experiment",
+            'owner_name': owner_name or "Not specified",
+            'stakeholders': stakeholders or "Not specified",
             'feature_description': feature_description or "Not specified",
             'hypothesis': hypothesis or "Not specified",
             'test_type': test_type,
@@ -400,7 +709,8 @@ def experiment_designer():
             'expected_lift': expected_lift if test_type == "Superiority Test" else None,
             'non_inferiority_margin': non_inferiority_margin if test_type == "Non-Inferiority Test" else None,
             'secondary_metrics': secondary_metrics,
-            'campaign': campaign,
+            'epcvip_campaign': epcvip_campaign,
+            'epcvip_affiliate': epcvip_affiliate,
             'traffic_type': traffic_type,
             'user_segment': user_segment,
             'control_variant': control_variant,
@@ -418,8 +728,10 @@ def experiment_designer():
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("📊 Experiment Details")
+            st.subheader("�� Experiment Details")
             st.write(f"**Name:** {preview_data['experiment_name']}")
+            st.write(f"**Owner:** {preview_data['owner_name']}")
+            st.write(f"**Stakeholders:** {preview_data['stakeholders']}")
             st.write(f"**Test Type:** {preview_data['test_type']}")
             st.write(f"**Primary Metric:** {preview_data['primary_metric']} (Baseline: {preview_data['baseline_value']}%)")
             
@@ -428,7 +740,10 @@ def experiment_designer():
             elif preview_data['test_type'] == "Non-Inferiority Test" and preview_data['non_inferiority_margin']:
                 st.write(f"**Non-Inferiority Margin:** {preview_data['non_inferiority_margin']}%")
             
-            st.write(f"**Campaign:** {preview_data['campaign']}")
+            if preview_data['epcvip_campaign']:
+                st.write(f"**EPCVIP Campaign:** {preview_data['epcvip_campaign']}")
+            if preview_data['epcvip_affiliate']:
+                st.write(f"**EPCVIP Affiliate:** {preview_data['epcvip_affiliate']}")
             st.write(f"**Traffic Type:** {preview_data['traffic_type']}")
             st.write(f"**User Segment:** {preview_data['user_segment']}")
             st.write(f"**Device Type:** {preview_data['device_type']}")
@@ -470,6 +785,16 @@ def experiment_designer():
         else:
             validation_issues.append("✅ Experiment name provided")
             
+        if not owner_name:
+            validation_issues.append("⚠️ Experiment owner recommended")
+        else:
+            validation_issues.append("✅ Experiment owner provided")
+            
+        if not stakeholders:
+            validation_issues.append("⚠️ Stakeholders recommended")
+        else:
+            validation_issues.append("✅ Stakeholders provided")
+            
         if not feature_description:
             validation_issues.append("❌ Feature description is required")
         else:
@@ -495,76 +820,157 @@ def experiment_designer():
     
     # ===== FINAL SUBMISSION SECTION =====
     st.markdown("---")
-    st.markdown('<div class="step-header"><h3>🚀 Generate Final Experiment Design</h3></div>', unsafe_allow_html=True)
+    st.markdown('<div class="step-header"><h3>🚀 Create Experiment in Notion</h3></div>', unsafe_allow_html=True)
     
-    # Generate final design button
-    if st.button("🚀 Generate Final Design", type="primary"):
-            # Validate required fields
-            if not experiment_name or not feature_description or not hypothesis:
-                st.error("❌ Please fill in all required fields: Experiment Name, Feature Being Tested, and Hypothesis")
+    st.info("💡 **Note:** Add actual results in the Notion experiment page after creation. The Post-Experiment Analysis tool will read those results.")
+    
+    # Create final form data
+    saved_sample_size = SessionManager.get_form_data('calculated_sample_size')
+    saved_runtime = SessionManager.get_form_data('estimated_runtime')
+    saved_daily_users = SessionManager.get_form_data('daily_users_calculated')
+    
+    final_form_data = {
+        'experiment_name': experiment_name,
+        'owner_name': owner_name,
+        'stakeholders': stakeholders,
+        'epcvip_initiative': epcvip_initiative,
+        'feature_description': feature_description,
+        'hypothesis': hypothesis,
+        'test_type': test_type,
+        'primary_metric': primary_metric,
+        'baseline_value': baseline_value,
+        'expected_lift': expected_lift if test_type == "Superiority Test" else None,
+        'non_inferiority_margin': non_inferiority_margin if test_type == "Non-Inferiority Test" else None,
+        'secondary_metrics': secondary_metrics,
+        'epcvip_campaign': epcvip_campaign,
+        'epcvip_affiliate': epcvip_affiliate,
+        'traffic_type': traffic_type,
+        'user_segment': user_segment,
+        'control_variant': control_variant,
+        'treatment_variant': treatment_variant,
+        'device_type': device_type,
+        'traffic_period': SessionManager.get_form_data('traffic_period', 'Daily'),
+        'daily_users': saved_daily_users or 0,
+        'calculated_sample_size': saved_sample_size,
+        'estimated_runtime': saved_runtime,
+        'priority': priority,
+        'business_goal': business_goal,
+        'jira_link': jira_link
+    }
+    
+    # Save to session state
+    SessionManager.update_form_data(final_form_data)
+    
+    # Step 1: Review Notion Data
+    if st.button("📋 Review Notion Data", type="primary"):
+        # Validate required fields
+        if not experiment_name or not feature_description or not hypothesis:
+            st.error("❌ Please fill in all required fields: Experiment Name, Feature Being Tested, and Hypothesis")
+            return
+        
+        if not saved_sample_size:
+            st.error("❌ Sample size calculation failed. Please check your test parameters.")
+            return
+        
+        # Validate EPCVIP Campaign if selected
+        if epcvip_campaign:
+            try:
+                notion_integration = NotionIntegration()
+                if not notion_integration.validate_campaign_selection(epcvip_campaign):
+                    st.error(f"❌ Selected EPCVIP Campaign '{epcvip_campaign}' not found in Notion database")
+                    return
+            except Exception as e:
+                st.error(f"❌ Error validating EPCVIP Campaign: {e}")
                 return
-            
-            saved_sample_size = SessionManager.get_form_data('calculated_sample_size')
-            if not saved_sample_size:
-                st.error("❌ Sample size calculation failed. Please check your test parameters.")
+        
+        # Validate EPCVIP Affiliate if selected
+        if epcvip_affiliate:
+            try:
+                notion_integration = NotionIntegration()
+                if not notion_integration.validate_affiliate_selection(epcvip_affiliate):
+                    st.error(f"❌ Selected EPCVIP Affiliate '{epcvip_affiliate}' not found in Notion database")
+                    return
+            except Exception as e:
+                st.error(f"❌ Error validating EPCVIP Affiliate: {e}")
                 return
-            
-            # Get saved values from session state
-            saved_runtime = SessionManager.get_form_data('estimated_runtime')
-            saved_daily_users = SessionManager.get_form_data('daily_users_calculated')
-            
-            # Create final form data
-            final_form_data = {
-                'experiment_name': experiment_name,
-                'feature_description': feature_description,
-                'hypothesis': hypothesis,
-                'test_type': test_type,
-                'primary_metric': primary_metric,
-                'baseline_value': baseline_value,
-                'expected_lift': expected_lift if test_type == "Superiority Test" else None,
-                'non_inferiority_margin': non_inferiority_margin if test_type == "Non-Inferiority Test" else None,
-                'secondary_metrics': secondary_metrics,
-                'campaign': campaign,
-                'traffic_type': traffic_type,
-                'user_segment': user_segment,
-                'control_variant': control_variant,
-                'treatment_variant': treatment_variant,
-                'device_type': device_type,
-                'traffic_period': SessionManager.get_form_data('traffic_period', 'Daily'),
-                'daily_users': saved_daily_users or 0,
-                'calculated_sample_size': saved_sample_size,
-                'estimated_runtime': saved_runtime,
-                'priority': priority,
-                'business_goal': business_goal
-            }
-            
-            # Save to session state
-            SessionManager.update_form_data(final_form_data)
-            
-            # Generate PDF
-            pdf_generator = PDFGenerator()
-            pdf_buffer = pdf_generator.create_experiment_pdf(final_form_data)
-            
-            st.success("✅ Experiment design generated successfully!")
-            
-            # Display final summary
-            st.subheader("📋 Final Experiment Summary")
-            st.write(f"**Experiment:** {experiment_name}")
-            st.write(f"**Test Type:** {test_type}")
-            st.write(f"**Primary Metric:** {primary_metric} (Baseline: {baseline_value}%)")
-            if test_type == "Superiority Test":
-                st.write(f"**Expected Lift:** {expected_lift}%")
-            else:
-                st.write(f"**Non-Inferiority Margin:** {non_inferiority_margin}%")
-            st.write(f"**Sample Size:** {saved_sample_size:,} users per group ({saved_sample_size*2:,} total)")
-            st.write(f"**Runtime:** {saved_runtime} days")
-            st.write(f"**Priority:** {priority}")
-            
-            # Download button
-            st.download_button(
-                label="📥 Download Experiment Design (PDF)",
-                data=pdf_buffer,
-                file_name=f"experiment_design_{experiment_name.replace(' ', '_')}.pdf",
-                mime="application/pdf",
-                type="primary"
-            ) 
+        
+        # Validate EPCVIP Initiative if selected
+        if epcvip_initiative:
+            try:
+                notion_integration = NotionIntegration()
+                if not notion_integration.validate_initiative_selection(epcvip_initiative):
+                    st.error(f"❌ Selected EPCVIP Initiative '{epcvip_initiative}' not found in Notion database")
+                    return
+            except Exception as e:
+                st.error(f"❌ Error validating EPCVIP Initiative: {e}")
+                return
+        
+        # Show preview of what will be sent to Notion
+        st.success("✅ Form validation passed!")
+        
+        st.subheader("📋 Notion Preview")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Notion Properties:**")
+            st.write(f"• **Test Order:** 1 (title)")
+            st.write(f"• **Ad Chain:** {treatment_variant}")
+            if jira_link:
+                st.write(f"• **JIRA Link (Ad Chain):** {jira_link}")
+            if epcvip_campaign:
+                st.write(f"• **EPCVIP Campaigns:** {epcvip_campaign}")
+            if epcvip_initiative:
+                st.write(f"• **Feature:** {epcvip_initiative}")
+            st.write("• **Feature Status:** Planned (default for new experiments)")
+        
+        with col2:
+            st.write("**Page Content Preview:**")
+            st.write("📋 Experiment Details")
+            st.write(f"• **Experiment Name:** {experiment_name} (will be in page content)")
+            st.write(f"• Owner: {owner_name}")
+            st.write(f"• Test Type: {test_type}")
+            st.write(f"• Sample Size: {saved_sample_size:,} users per group")
+            st.write(f"• Runtime: {saved_runtime} days")
+            if epcvip_campaign:
+                st.write(f"• EPCVIP Campaign: {epcvip_campaign}")
+            if epcvip_affiliate:
+                st.write(f"• EPCVIP Affiliate: {epcvip_affiliate}")
+            if epcvip_initiative:
+                st.write(f"• EPCVIP Initiative: {epcvip_initiative}")
+        
+        # Store form data in session for the next step
+        st.session_state.notion_form_data = final_form_data
+        st.session_state.show_create_button = True
+    
+    # Step 2: Create in Notion
+    if st.session_state.get('show_create_button', False):
+        st.markdown("---")
+        st.subheader("🚀 Create Experiment")
+        
+        if st.button("✅ Create in Notion", type="primary"):
+            try:
+                # Initialize Notion integration
+                notion_integration = NotionIntegration()
+                
+                # Create experiment in Notion
+                new_page = notion_integration.create_experiment_page(st.session_state.notion_form_data)
+                
+                if new_page:
+                    st.success("✅ Experiment created successfully in Notion!")
+                    
+                    # Display success information
+                    page_url = f"https://notion.so/{new_page['id'].replace('-', '')}"
+                    st.write(f"**Page ID:** {new_page['id']}")
+                    st.write(f"**View in Notion:** [Click here]({page_url})")
+                    
+                    # Clear session state
+                    st.session_state.show_create_button = False
+                    if 'notion_form_data' in st.session_state:
+                        del st.session_state.notion_form_data
+                else:
+                    st.error("❌ Failed to create experiment in Notion. Please check the error messages above.")
+                    
+            except Exception as e:
+                st.error(f"❌ Error connecting to Notion: {e}")
+                st.error("Please check your Notion token and try again.") 

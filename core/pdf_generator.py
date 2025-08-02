@@ -23,6 +23,19 @@ class PDFGenerator:
         )
         story.append(Paragraph(f"Experiment: {form_data.get('experiment_name', 'N/A')}", title_style))
         
+        # Owner and Stakeholders
+        story.append(Paragraph("<b>Experiment Team:</b>", styles['Heading2']))
+        team_data = [
+            ("Experiment Owner", form_data.get('owner_name', 'N/A')),
+            ("Stakeholders", form_data.get('stakeholders', 'N/A'))
+        ]
+        
+        for label, value in team_data:
+            story.append(Paragraph(f"<b>{label}:</b> {value}", styles['Normal']))
+            story.append(Spacer(1, 6))
+        
+        story.append(Spacer(1, 12))
+        
         # Experiment Configuration Section
         story.append(Paragraph("<b>Experiment Configuration:</b>", styles['Heading2']))
         
